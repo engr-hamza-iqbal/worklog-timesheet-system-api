@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/.bin/prisma.cmd';if(fs.existsSync(p)){fs.writeFileSync(p, '@ECHO off\\r\\nSETLOCAL\\r\\nSET \\\"_prog=node\\\"\\r\\nSET \\\"PRISMA_CLI=%~dp0\\\\..\\\\prisma\\\\build\\\\index.js\\\"\\r\\n\\\"%_prog%\\\" \\\"%PRISMA_CLI%\\\" %*\\r\\n');}\"",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "prisma": "node ./node_modules/prisma/build/index.js",
