@@ -1,6 +1,6 @@
-const { sendError } = require('../utils/response');
+import { sendError } from '../utils/response.js';
 
-function errorHandler(err, req, res, next) {
+export function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal server error';
   const code = err.code || 'INTERNAL_ERROR';
@@ -27,4 +27,4 @@ function errorHandler(err, req, res, next) {
   return sendError(res, message, statusCode, code);
 }
 
-module.exports = errorHandler;
+export default errorHandler;

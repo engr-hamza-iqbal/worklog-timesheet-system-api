@@ -1,10 +1,10 @@
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcryptjs');
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('--- Starting Seed Script (Node.js/JavaScript) ---');
+  console.log('--- Starting Seed Script (Node.js/JavaScript ESM) ---');
 
   // 1. Clean existing records in reverse dependency order for idempotency
   await prisma.emailLog.deleteMany();
@@ -389,7 +389,7 @@ async function main() {
   });
 
   console.log('Seeded Capability Grants, Scopes, and Access Audit Logs.');
-  console.log('--- Seed Completed Successfully (Node.js/JavaScript) ---');
+  console.log('--- Seed Completed Successfully (Node.js/JavaScript ESM) ---');
 }
 
 main()

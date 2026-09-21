@@ -1,8 +1,8 @@
-const express = require('express');
-const cors = require('cors');
-const routes = require('./routes');
-const errorHandler = require('./middleware/errorHandler');
-const { sendError } = require('./utils/response');
+import express from 'express';
+import cors from 'cors';
+import routes from './routes/index.js';
+import errorHandler from './middleware/errorHandler.js';
+import { sendError } from './utils/response.js';
 
 const app = express();
 
@@ -22,4 +22,4 @@ app.use((req, res) => {
 // Centralized Error Handler
 app.use(errorHandler);
 
-module.exports = app;
+export default app;

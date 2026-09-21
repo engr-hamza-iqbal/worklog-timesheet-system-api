@@ -1,10 +1,10 @@
-const http = require('http');
-const app = require('../src/app');
-const prisma = require('../src/config/db');
-const swaggerSpec = require('../src/docs/swagger');
+import http from 'http';
+import app from '../src/app.js';
+import prisma from '../src/config/db.js';
+import swaggerSpec from '../src/docs/swagger.js';
 
 async function runTests() {
-  console.log('--- Starting Authentication & Access Control Verification ---');
+  console.log('--- Starting Authentication & Access Control Verification (ESM) ---');
 
   // Verify Swagger Spec is generated
   if (!swaggerSpec.openapi || !swaggerSpec.paths) {
@@ -80,7 +80,7 @@ async function runTests() {
     }
     console.log('✔ Capability middleware rejects unauthenticated access.');
 
-    console.log('--- ALL AUTH VERIFICATION TESTS PASSED SUCCESSFULLY ---');
+    console.log('--- ALL AUTH VERIFICATION TESTS PASSED SUCCESSFULLY (ESM) ---');
   } finally {
     server.close();
     await prisma.$disconnect();

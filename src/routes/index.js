@@ -1,11 +1,11 @@
-const express = require('express');
-const swaggerUi = require('swagger-ui-express');
-const swaggerSpec = require('../docs/swagger');
-const prisma = require('../config/db');
-const { sendSuccess, sendError } = require('../utils/response');
-const { authenticate } = require('../middleware/auth');
-const { requireCapability, requireAdmin } = require('../middleware/permission');
-const authRoutes = require('./authRoutes');
+import express from 'express';
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpec from '../docs/swagger.js';
+import prisma from '../config/db.js';
+import { sendSuccess, sendError } from '../utils/response.js';
+import { authenticate } from '../middleware/auth.js';
+import { requireCapability, requireAdmin } from '../middleware/permission.js';
+import authRoutes from './authRoutes.js';
 
 const router = express.Router();
 
@@ -58,4 +58,4 @@ router.get(
   }
 );
 
-module.exports = router;
+export default router;

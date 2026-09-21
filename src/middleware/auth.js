@@ -1,9 +1,9 @@
-const jwt = require('jsonwebtoken');
-const prisma = require('../config/db');
-const { JWT_SECRET } = require('../config/env');
-const { sendError } = require('../utils/response');
+import jwt from 'jsonwebtoken';
+import prisma from '../config/db.js';
+import { JWT_SECRET } from '../config/env.js';
+import { sendError } from '../utils/response.js';
 
-async function authenticate(req, res, next) {
+export async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -45,6 +45,6 @@ async function authenticate(req, res, next) {
   }
 }
 
-module.exports = {
+export default {
   authenticate,
 };

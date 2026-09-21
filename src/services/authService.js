@@ -1,10 +1,10 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const prisma = require('../config/db');
-const { JWT_SECRET, JWT_EXPIRES_IN } = require('../config/env');
-const { getUserActiveCapabilities } = require('./accessService');
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import prisma from '../config/db.js';
+import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
+import { getUserActiveCapabilities } from './accessService.js';
 
-function generateToken(user) {
+export function generateToken(user) {
   return jwt.sign(
     {
       userId: user.id,
@@ -16,7 +16,7 @@ function generateToken(user) {
   );
 }
 
-async function register({ name, email, password }) {
+export async function register({ name, email, password }) {
   if (!name || !name.trim()) {
     const error = new Error('Name is required.');
     error.statusCode = 400;
@@ -86,7 +86,7 @@ async function register({ name, email, password }) {
   };
 }
 
-async function login({ email, password }) {
+export async function login({ email, password }) {
   const normalizedEmail = email ? email.trim().toLowerCase() : '';
 
   if (!normalizedEmail || !password) {
@@ -141,7 +141,7 @@ async function login({ email, password }) {
   };
 }
 
-async function getCurrentUser(userId) {
+export async function getCurrentUser(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -176,7 +176,8 @@ async function getCurrentUser(userId) {
   };
 }
 
-module.exports = {
+export default {
+  generateToken,
   register,
   login,
   getCurrentUser,

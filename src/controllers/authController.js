@@ -1,7 +1,7 @@
-const authService = require('../services/authService');
-const { sendSuccess, sendError } = require('../utils/response');
+import authService from '../services/authService.js';
+import { sendSuccess, sendError } from '../utils/response.js';
 
-async function handleRegister(req, res, next) {
+export async function handleRegister(req, res, next) {
   try {
     const { name, email, password } = req.body;
     const result = await authService.register({ name, email, password });
@@ -11,7 +11,7 @@ async function handleRegister(req, res, next) {
   }
 }
 
-async function handleLogin(req, res, next) {
+export async function handleLogin(req, res, next) {
   try {
     const { email, password } = req.body;
     const result = await authService.login({ email, password });
@@ -21,7 +21,7 @@ async function handleLogin(req, res, next) {
   }
 }
 
-async function handleGetMe(req, res, next) {
+export async function handleGetMe(req, res, next) {
   try {
     // req.user is populated by authenticate middleware
     const result = await authService.getCurrentUser(req.user.id);
@@ -31,7 +31,7 @@ async function handleGetMe(req, res, next) {
   }
 }
 
-async function handleLogout(req, res, next) {
+export async function handleLogout(req, res, next) {
   try {
     // Stateless JWT: inform client to discard token
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
@@ -40,7 +40,7 @@ async function handleLogout(req, res, next) {
   }
 }
 
-module.exports = {
+export default {
   handleRegister,
   handleLogin,
   handleGetMe,

@@ -1,7 +1,7 @@
-const prisma = require('../config/db');
+import prisma from '../config/db.js';
 
 // All 9 system capabilities as defined by schema and requirements
-const ALL_CAPABILITIES = [
+export const ALL_CAPABILITIES = [
   'VIEW_OTHER_RECORDS',
   'REVIEW_TIME',
   'DECIDE_TIME_OFF',
@@ -21,7 +21,7 @@ const ALL_CAPABILITIES = [
  * @param {Object} user - { id, accountType, isActive }
  * @returns {Promise<Object>} Map of capability code to { isGlobal: boolean, allowedProjectIds: string[], allowedUserIds: string[] }
  */
-async function getUserActiveCapabilities(user) {
+export async function getUserActiveCapabilities(user) {
   if (!user || !user.isActive) {
     return {};
   }
@@ -98,7 +98,7 @@ async function getUserActiveCapabilities(user) {
  * @param {Object} [scope] - { targetProjectId?: string, targetUserId?: string }
  * @returns {Promise<boolean>}
  */
-async function checkUserCapability(user, capabilityCode, scope = {}) {
+export async function checkUserCapability(user, capabilityCode, scope = {}) {
   if (!user || !user.isActive) {
     return false;
   }
@@ -134,7 +134,7 @@ async function checkUserCapability(user, capabilityCode, scope = {}) {
   return true;
 }
 
-module.exports = {
+export default {
   ALL_CAPABILITIES,
   getUserActiveCapabilities,
   checkUserCapability,

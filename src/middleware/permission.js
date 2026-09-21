@@ -1,5 +1,5 @@
-const { checkUserCapability } = require('../services/accessService');
-const { sendError } = require('../utils/response');
+import { checkUserCapability } from '../services/accessService.js';
+import { sendError } from '../utils/response.js';
 
 /**
  * Higher-order middleware that enforces capability requirements on endpoints.
@@ -8,7 +8,7 @@ const { sendError } = require('../utils/response');
  * @param {string} capabilityCode - Required CapabilityCode
  * @param {Function} [scopeExtractor] - Optional function (req) => ({ targetProjectId, targetUserId })
  */
-function requireCapability(capabilityCode, scopeExtractor = null) {
+export function requireCapability(capabilityCode, scopeExtractor = null) {
   return async (req, res, next) => {
     if (!req.user) {
       return sendError(res, 'Authentication required before permission evaluation.', 401, 'UNAUTHORIZED');
@@ -43,7 +43,7 @@ function requireCapability(capabilityCode, scopeExtractor = null) {
  * Strictly ensures the user is an ADMINISTRATOR.
  * Used exclusively for access management and capability granting screens.
  */
-function requireAdmin() {
+export function requireAdmin() {
   return (req, res, next) => {
     if (!req.user) {
       return sendError(res, 'Authentication required.', 401, 'UNAUTHORIZED');
@@ -57,7 +57,7 @@ function requireAdmin() {
   };
 }
 
-module.exports = {
+export default {
   requireCapability,
   requireAdmin,
 };
