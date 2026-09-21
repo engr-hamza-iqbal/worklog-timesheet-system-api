@@ -7,9 +7,13 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "node prisma/seed.js"
+    "prisma": "node ./node_modules/prisma/build/index.js",
+    "prisma:generate": "node ./node_modules/prisma/build/index.js generate",
+    "prisma:migrate": "node ./node_modules/prisma/build/index.js migrate dev",
+    "prisma:seed": "node prisma/seed.js",
+    "prisma:studio": "node ./node_modules/prisma/build/index.js studio",
+    "studio": "node ./node_modules/prisma/build/index.js studio",
+    "test:auth": "node test/verifyAuth.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
