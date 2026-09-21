@@ -1,0 +1,399 @@
+// Prisma schema for Work Log & Timesheet System
+// Database target: PostgreSQL (Supabase compatible)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum AccountType {
+  EMPLOYEE
+  ADMIN
+}
+
+enum ProjectStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TimeEntryStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum TimeEntryAction {
+  CREATE
+  UPDATE
+  SUBMIT
+  RETURN
+  RESUBMIT
+  APPROVE
+  REOPEN
+  DELETE
+}
+
+enum TimeOffStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  CANCELLED
+}
+
+enum CapabilityCode {
+  VIEW_OTHER_RECORDS
+  REVIEW_TIME
+  DECIDE_TIME_OFF
+  MANAGE_CLIENTS_PROJECTS
+  ASSIGN_PROJECTS
+  MANAGE_USERS
+  VIEW_REPORTS
+  VIEW_ANALYTICS
+  VIEW_BILLING
+}
+
+enum ScopeType {
+  USER
+  PROJECT
+}
+
+enum AccessAuditAction {
+  GRANT
+  REVOKE
+  CHANGE_SCOPE
+  CHANGE_EXPIRY
+}
+
+enum EmailType {
+  MISSING_TIMESHEET
+  ENTRY_RETURNED
+  TIME_OFF_DECIDED
+  TIME_OFF_REVIEW_REQUIRED
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ==========================================
+// MODELS
+// ==========================================
+
+/// User account: strictly either EMPLOYEE or ADMIN.
+/// Access outside these two roles is handled exclusively via CapabilityGrants.
+model User {
+  id           String      @id @default(uuid())
+  name         String
+  email        String      @unique
+  passwordHash String
+  accountType  AccountType @default(EMPLOYEE)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relationships
+  assignments              ProjectAssignment[]
+  timeEntries              TimeEntry[]
+  revisionsCreated         TimeEntryRevision[]
+  timeEntryHistories       TimeEntryHistory[]
+  timeOffRequests          TimeOffRequest[]       @relation("UserTimeOffRequests")
+  decidedTimeOffRequests   TimeOffRequest[]       @relation("UserDecidedTimeOffRequests")
+  timeOffDays              TimeOffDay[]
+  capabilityGrantsReceived CapabilityGrant[]      @relation("UserGrantsReceived")
+  capabilityGrantsIssued   CapabilityGrant[]      @relation("UserGrantsIssued")
+  capabilityGrantsRevoked  CapabilityGrant[]      @relation("UserGrantsRevoked")
+  scopedCapabilityGrants   CapabilityGrantScope[]
+  accessLogsActioner       AccessAuditLog[]       @relation("AccessLogActor")
+  accessLogsTarget         AccessAuditLog[]       @relation("AccessLogTarget")
+  emailLogs                EmailLog[]
+
+  @@index([email, isActive])
+  @@index([accountType, isActive])
+}
+
+/// Client entity: companies billed for time.
+model Client {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects Project[]
+
+  @@index([isActive])
+}
+
+/// Project entity: belongs to one Client.
+/// A closed project retains history but disallows new time entries.
+model Project {
+  id        String        @id @default(uuid())
+  clientId  String
+  name      String
+  status    ProjectStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  client             Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  assignments        ProjectAssignment[]
+  rates              ProjectRate[]
+  timeEntries        TimeEntry[]
+  timeEntryRevisions TimeEntryRevision[]
+  scopedGrants       CapabilityGrantScope[]
+
+  @@unique([clientId, name])
+  @@index([clientId, status])
+}
+
+/// Many-to-many relationship tracking which employees are assigned to which projects over time.
+model ProjectAssignment {
+  id         String    @id @default(uuid())
+  userId     String
+  projectId  String
+  assignedAt DateTime  @default(now())
+  removedAt  DateTime?
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([userId, projectId, removedAt])
+  @@index([projectId, removedAt])
+}
+
+/// Historical and current billing rate records for a project.
+/// Uses Decimal(10, 2) to eliminate floating-point rounding errors.
+model ProjectRate {
+  id            String    @id @default(uuid())
+  projectId     String
+  ratePerHour   Decimal   @db.Decimal(10, 2)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, effectiveFrom, effectiveTo])
+}
+
+/// Core identity and current status of a recorded work item.
+/// Duration is stored in whole minutes (divisible by 15).
+model TimeEntry {
+  id                    String          @id @default(uuid())
+  userId                String
+  projectId             String
+  workDate              DateTime        @db.Date
+  durationMinutes       Int
+  description           String          @db.Text
+  status                TimeEntryStatus @default(DRAFT)
+  currentRevisionNumber Int             @default(1)
+  approvedRateSnapshot  Decimal?        @db.Decimal(10, 2)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project   Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  revisions TimeEntryRevision[]
+  histories TimeEntryHistory[]
+
+  @@index([userId, workDate])
+  @@index([projectId, workDate])
+  @@index([status, workDate])
+  @@index([userId, status, workDate])
+}
+
+/// Immutable historical versions of WHAT a TimeEntry contained across revisions.
+model TimeEntryRevision {
+  id                  String   @id @default(uuid())
+  timeEntryId         String
+  revisionNumber      Int
+  projectId           String
+  workDate            DateTime @db.Date
+  durationMinutes     Int
+  description         String   @db.Text
+  billingRateSnapshot Decimal? @db.Decimal(10, 2)
+  createdById         String
+  createdAt           DateTime @default(now())
+
+  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Restrict)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy User      @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([timeEntryId, revisionNumber])
+  @@index([timeEntryId])
+}
+
+/// Audit trail of WHAT HAPPENED to a TimeEntry (state transitions, returns, reopens).
+model TimeEntryHistory {
+  id             String          @id @default(uuid())
+  timeEntryId    String
+  action         TimeEntryAction
+  previousStatus TimeEntryStatus?
+  newStatus      TimeEntryStatus
+  performedById  String
+  comment        String?         @db.Text
+  createdAt      DateTime        @default(now())
+
+  timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Restrict)
+  performedBy User      @relation(fields: [performedById], references: [id], onDelete: Restrict)
+
+  @@index([timeEntryId, createdAt])
+  @@index([performedById, createdAt])
+}
+
+/// Configurable types of time off (Annual, Sick, Unpaid, etc.).
+model TimeOffType {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requests TimeOffRequest[]
+
+  @@index([isActive])
+}
+
+/// Header record for a requested date range of time off.
+model TimeOffRequest {
+  id              String        @id @default(uuid())
+  userId          String
+  timeOffTypeId   String
+  startDate       DateTime      @db.Date
+  endDate         DateTime      @db.Date
+  reason          String        @db.Text
+  status          TimeOffStatus @default(PENDING)
+  decisionComment String?       @db.Text
+  decidedById     String?
+  decidedAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user        User         @relation("UserTimeOffRequests", fields: [userId], references: [id], onDelete: Restrict)
+  timeOffType TimeOffType  @relation(fields: [timeOffTypeId], references: [id], onDelete: Restrict)
+  decidedBy   User?        @relation("UserDecidedTimeOffRequests", fields: [decidedById], references: [id], onDelete: Restrict)
+  days        TimeOffDay[]
+
+  @@index([userId, status, startDate, endDate])
+  @@index([status, startDate])
+}
+
+/// Materialized individual days for each TimeOffRequest.
+/// Allows fast indexed lookups for 'Was employee away on date X?' and missing-timesheet exclusion.
+model TimeOffDay {
+  id               String        @id @default(uuid())
+  timeOffRequestId String
+  userId           String
+  date             DateTime      @db.Date
+  status           TimeOffStatus
+
+  timeOffRequest TimeOffRequest @relation(fields: [timeOffRequestId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, date, status])
+  @@index([date, status])
+}
+
+/// Seeded, fixed capability codes that can be granted to users.
+model Capability {
+  id          String         @id @default(uuid())
+  code        CapabilityCode @unique
+  description String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  grants CapabilityGrant[]
+}
+
+/// Individual capability grant given to a user by an admin.
+/// Can have an expiry date and can be revoked immediately.
+model CapabilityGrant {
+  id          String    @id @default(uuid())
+  userId      String
+  capabilityId String
+  grantedById String
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  createdAt   DateTime  @default(now())
+
+  user       User                   @relation("UserGrantsReceived", fields: [userId], references: [id], onDelete: Restrict)
+  capability Capability             @relation(fields: [capabilityId], references: [id], onDelete: Restrict)
+  grantedBy  User                   @relation("UserGrantsIssued", fields: [grantedById], references: [id], onDelete: Restrict)
+  revokedBy  User?                  @relation("UserGrantsRevoked", fields: [revokedById], references: [id], onDelete: Restrict)
+  scopes     CapabilityGrantScope[]
+
+  @@index([userId, capabilityId, revokedAt, expiresAt])
+  @@index([grantedById, createdAt])
+}
+
+/// Scopes attached to a CapabilityGrant.
+/// 0 scope rows = GLOBAL grant.
+/// 1+ rows = restricted strictly to specified users or projects.
+model CapabilityGrantScope {
+  id              String    @id @default(uuid())
+  grantId         String
+  scopeType       ScopeType
+  targetUserId    String?
+  targetProjectId String?
+
+  grant         CapabilityGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  targetUser    User?           @relation(fields: [targetUserId], references: [id], onDelete: Restrict)
+  targetProject Project?        @relation(fields: [targetProjectId], references: [id], onDelete: Restrict)
+
+  @@index([grantId])
+  @@index([targetUserId])
+  @@index([targetProjectId])
+}
+
+/// Append-only security audit log tracking all permission grants, revocations, and scope changes.
+model AccessAuditLog {
+  id             String            @id @default(uuid())
+  action         AccessAuditAction
+  actorId        String
+  targetUserId   String
+  capabilityCode CapabilityCode
+  grantId        String?
+  details        Json?
+  createdAt      DateTime          @default(now())
+
+  actor      User @relation("AccessLogActor", fields: [actorId], references: [id], onDelete: Restrict)
+  targetUser User @relation("AccessLogTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@index([targetUserId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+/// Audit log for email dispatch attempts.
+/// Includes referenceDate and composite index to prevent duplicate missing-timesheet reminders in one day.
+model EmailLog {
+  id                String      @id @default(uuid())
+  recipientUserId   String?
+  recipientEmail    String
+  emailType         EmailType
+  subject           String
+  relatedEntityType String?
+  relatedEntityId   String?
+  referenceDate     DateTime?   @db.Date
+  status            EmailStatus @default(PENDING)
+  errorMessage      String?     @db.Text
+  attemptedAt       DateTime    @default(now())
+  sentAt            DateTime?
+  createdAt         DateTime    @default(now())
+
+  recipientUser User? @relation(fields: [recipientUserId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, emailType, referenceDate, attemptedAt])
+  @@index([recipientEmail, createdAt])
+}
