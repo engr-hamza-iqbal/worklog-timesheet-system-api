@@ -5,11 +5,16 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/.bin/prisma.cmd';if(fs.existsSync(p)){fs.writeFileSync(p, '@ECHO off\\r\\nSETLOCAL\\r\\nSET \\\"_prog=node\\\"\\r\\nSET \\\"PRISMA_CLI=%~dp0\\\\..\\\\prisma\\\\build\\\\index.js\\\"\\r\\n\\\"%_prog%\\\" \\\"%PRISMA_CLI%\\\" %*\\r\\n');}\"",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "node prisma/seed.js"
+    "prisma": "node ./node_modules/prisma/build/index.js",
+    "prisma:generate": "node ./node_modules/prisma/build/index.js generate",
+    "prisma:migrate": "node ./node_modules/prisma/build/index.js migrate dev",
+    "prisma:seed": "node prisma/seed.js",
+    "prisma:studio": "node ./node_modules/prisma/build/index.js studio",
+    "studio": "node ./node_modules/prisma/build/index.js studio",
+    "test:auth": "node test/verifyAuth.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
