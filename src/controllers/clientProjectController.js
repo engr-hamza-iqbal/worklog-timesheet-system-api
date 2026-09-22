@@ -59,6 +59,17 @@ export async function handleCreateProject(req, res, next) {
   }
 }
 
+export async function handleUpdateProject(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    const project = await clientProjectService.updateProject(id, { name });
+    return sendSuccess(res, project, 'Project updated successfully.');
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function handleUpdateProjectStatus(req, res, next) {
   try {
     const { id } = req.params;
@@ -87,6 +98,7 @@ export default {
   handleUpdateClient,
   handleGetProjects,
   handleCreateProject,
+  handleUpdateProject,
   handleUpdateProjectStatus,
   handleAddProjectRate,
 };

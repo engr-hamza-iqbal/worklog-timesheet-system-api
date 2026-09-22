@@ -5,6 +5,7 @@ import {
   handleUpdateClient,
   handleGetProjects,
   handleCreateProject,
+  handleUpdateProject,
   handleUpdateProjectStatus,
   handleAddProjectRate,
 } from '../controllers/clientProjectController.js';
@@ -23,6 +24,7 @@ router.put('/clients/:id', requireCapability('MANAGE_CLIENTS_PROJECTS'), handleU
 // Projects
 router.get('/projects', handleGetProjects);
 router.post('/projects', requireCapability('MANAGE_CLIENTS_PROJECTS'), handleCreateProject);
+router.put('/projects/:id', requireCapability('MANAGE_CLIENTS_PROJECTS'), handleUpdateProject);
 router.patch('/projects/:id/status', requireCapability('MANAGE_CLIENTS_PROJECTS'), handleUpdateProjectStatus);
 router.post('/projects/:id/rates', requireCapability('MANAGE_CLIENTS_PROJECTS'), handleAddProjectRate);
 
