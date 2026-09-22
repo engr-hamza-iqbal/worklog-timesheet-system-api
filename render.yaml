@@ -16,6 +16,8 @@ services:
         value: 5000
       - key: JWT_EXPIRES_IN
         value: 24h
+      - key: CORS_ORIGIN
+        value: '*'
       - key: JWT_SECRET
         generateValue: true
       - key: DATABASE_URL

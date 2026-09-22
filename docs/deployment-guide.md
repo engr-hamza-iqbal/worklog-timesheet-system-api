@@ -71,12 +71,17 @@ This guide walks you step-by-step through deploying the **Work Log & Timesheet S
    * **Root Directory**: Leave blank (root of repo)
    * **Runtime**: `Node`
    * **Build Command**: `npm install && npm run prisma:generate`
-   * **Start Command**: `npm start`
+   * **Start Command**: `npm start` *(or `node start.js`)*
    * **Instance Type**: `Free`
+
+> [!IMPORTANT]
+> **Render Start Command**: If Render defaults to `node start`, it will now automatically load our `start.js` entrypoint. However, the best practice is to explicitly set the **Start Command** field in Render to `npm start`.
+
 5. Configure **Environment Variables** (click **Add Environment Variable**):
    * `DATABASE_URL`: *Your Supabase connection string*
    * `PORT`: `5000`
    * `NODE_ENV`: `production`
+   * `CORS_ORIGIN`: `*` *(or your Netlify URL, e.g. `https://your-site.netlify.app`)*
    * `JWT_SECRET`: *A secure random string (e.g. `d3a7e589...`)*
    * `JWT_EXPIRES_IN`: `24h`
 6. Click **Create Web Service**.
