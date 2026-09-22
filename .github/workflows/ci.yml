@@ -32,6 +32,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/worklog_test_db?schema=public
+      DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/worklog_test_db?schema=public
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
