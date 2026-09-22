@@ -2,9 +2,15 @@ name: Backend CI & Database Validation
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
@@ -45,7 +51,7 @@ jobs:
       - name: Push Schema to Test Database
         env:
           DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/worklog_test_db?schema=public
-        run: npx prisma db push --skip-generate
+        run: node ./node_modules/prisma/build/index.js db push --skip-generate
 
       - name: Seed Database
         env:
