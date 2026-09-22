@@ -5,7 +5,11 @@ import prisma from '../config/db.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireCapability, requireAdmin } from '../middleware/permission.js';
+
 import authRoutes from './authRoutes.js';
+import clientProjectRoutes from './clientProjectRoutes.js';
+import userRoutes from './userRoutes.js';
+import accessRoutes from './accessRoutes.js';
 
 const router = express.Router();
 
@@ -22,8 +26,13 @@ router.get('/health', async (req, res) => {
 
 router.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+// API Modules
 router.use('/api/auth', authRoutes);
+router.use('/api', clientProjectRoutes);
+router.use('/api', userRoutes);
+router.use('/api/access', accessRoutes);
 
+// Capability test endpoints
 router.get(
   '/api/test/reports-access',
   authenticate,

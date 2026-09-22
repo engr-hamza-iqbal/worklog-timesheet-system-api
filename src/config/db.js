@@ -1,7 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 
+// Supabase Transaction Mode (PgBouncer) — only log warnings/errors to avoid
+// console overhead from query logs, which added measurable latency in development.
 const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
+  log: ['warn', 'error'],
 });
 
 export default prisma;
