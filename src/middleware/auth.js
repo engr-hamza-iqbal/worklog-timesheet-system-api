@@ -15,7 +15,6 @@ export async function authenticate(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    // Look up fresh user record from database
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: {
@@ -39,7 +38,7 @@ export async function authenticate(req, res, next) {
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return sendError(res, 'Session token has expired. Please log in again.', 401, 'TOKEN_EXPIRED');
+      return sendError(res, 'Session has expired. Please log in again.', 401, 'TOKEN_EXPIRED');
     }
     return sendError(res, 'Invalid authentication token.', 401, 'INVALID_TOKEN');
   }

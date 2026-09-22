@@ -1,6 +1,5 @@
 import prisma from '../config/db.js';
 
-// All 9 system capabilities as defined by schema and requirements
 export const ALL_CAPABILITIES = [
   'VIEW_OTHER_RECORDS',
   'REVIEW_TIME',
@@ -13,20 +12,11 @@ export const ALL_CAPABILITIES = [
   'VIEW_BILLING',
 ];
 
-/**
- * Resolves all active capabilities and scopes for a user in real-time.
- * Administrator accounts hold all capabilities globally.
- * Employee accounts resolve active grants from the database.
- * 
- * @param {Object} user - { id, accountType, isActive }
- * @returns {Promise<Object>} Map of capability code to { isGlobal: boolean, allowedProjectIds: string[], allowedUserIds: string[] }
- */
 export async function getUserActiveCapabilities(user) {
   if (!user || !user.isActive) {
     return {};
   }
 
-  // Administrators inherently hold all capabilities globally
   if (user.accountType === 'ADMIN') {
     const adminCapabilities = {};
     for (const code of ALL_CAPABILITIES) {
@@ -39,7 +29,6 @@ export async function getUserActiveCapabilities(user) {
     return adminCapabilities;
   }
 
-  // Query database for active grants for this employee
   const now = new Date();
   const activeGrants = await prisma.capabilityGrant.findMany({
     where: {
@@ -90,20 +79,11 @@ export async function getUserActiveCapabilities(user) {
   return capabilityMap;
 }
 
-/**
- * Checks if a user possesses a specific capability, optionally evaluating project/user scope.
- * 
- * @param {Object} user - Authenticated user
- * @param {string} capabilityCode - Code from CapabilityCode enum
- * @param {Object} [scope] - { targetProjectId?: string, targetUserId?: string }
- * @returns {Promise<boolean>}
- */
 export async function checkUserCapability(user, capabilityCode, scope = {}) {
   if (!user || !user.isActive) {
     return false;
   }
 
-  // Admins have all capabilities
   if (user.accountType === 'ADMIN') {
     return true;
   }
@@ -115,22 +95,18 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
     return false;
   }
 
-  // If granted globally, permission holds everywhere
   if (capability.isGlobal) {
     return true;
   }
 
-  // If scoped to a project
   if (scope.targetProjectId) {
     return capability.allowedProjectIds.includes(scope.targetProjectId);
   }
 
-  // If scoped to a user
   if (scope.targetUserId) {
     return capability.allowedUserIds.includes(scope.targetUserId);
   }
 
-  // If no specific scope parameter was requested, possession of any grant satisfies base check
   return true;
 }
 

@@ -40,7 +40,6 @@ export async function register({ name, email, password }) {
     throw error;
   }
 
-  // Check if email already registered
   const existingUser = await prisma.user.findUnique({
     where: { email: normalizedEmail },
   });

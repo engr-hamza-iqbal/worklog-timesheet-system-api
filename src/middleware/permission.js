@@ -1,13 +1,6 @@
 import { checkUserCapability } from '../services/accessService.js';
 import { sendError } from '../utils/response.js';
 
-/**
- * Higher-order middleware that enforces capability requirements on endpoints.
- * Evaluates in real-time from the database to ensure immediate revocation.
- * 
- * @param {string} capabilityCode - Required CapabilityCode
- * @param {Function} [scopeExtractor] - Optional function (req) => ({ targetProjectId, targetUserId })
- */
 export function requireCapability(capabilityCode, scopeExtractor = null) {
   return async (req, res, next) => {
     if (!req.user) {
@@ -39,10 +32,6 @@ export function requireCapability(capabilityCode, scopeExtractor = null) {
   };
 }
 
-/**
- * Strictly ensures the user is an ADMINISTRATOR.
- * Used exclusively for access management and capability granting screens.
- */
 export function requireAdmin() {
   return (req, res, next) => {
     if (!req.user) {
