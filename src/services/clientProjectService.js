@@ -78,7 +78,10 @@ export async function updateClient(id, { name, isActive }) {
 export async function getProjects({ clientId, activeOnly = false } = {}) {
   const where = {};
   if (clientId) where.clientId = clientId;
-  if (activeOnly) where.status = 'ACTIVE';
+  if (activeOnly) {
+    where.status = 'ACTIVE';
+    where.client = { isActive: true };
+  }
 
   const projects = await prisma.project.findMany({
     where,
@@ -186,6 +189,46 @@ export async function createProject({ clientId, name, initialRatePerHour }) {
 }
 
 /**
+ * Update project details (e.g. rename)
+ */
+export async function updateProject(id, { name }) {
+  const project = await prisma.project.findUnique({ where: { id } });
+  if (!project) {
+    const error = new Error('Project not found.');
+    error.statusCode = 404;
+    error.code = 'PROJECT_NOT_FOUND';
+    throw error;
+  }
+
+  const data = {};
+  if (name && name.trim()) {
+    const trimmed = name.trim();
+    if (trimmed !== project.name) {
+      const existing = await prisma.project.findUnique({
+        where: {
+          clientId_name: {
+            clientId: project.clientId,
+            name: trimmed,
+          },
+        },
+      });
+      if (existing) {
+        const error = new Error(`Project "${trimmed}" already exists for this client.`);
+        error.statusCode = 409;
+        error.code = 'PROJECT_ALREADY_EXISTS';
+        throw error;
+      }
+      data.name = trimmed;
+    }
+  }
+
+  return prisma.project.update({
+    where: { id },
+    data,
+  });
+}
+
+/**
  * Toggle or update project status (ACTIVE or CLOSED)
  */
 export async function updateProjectStatus(id, { status }) {
@@ -230,6 +273,13 @@ export async function addProjectRate(projectId, { ratePerHour, effectiveFrom }) 
     throw error;
   }
 
+  if (project.status === 'CLOSED') {
+    const error = new Error('Cannot add a billing rate to a closed project.');
+    error.statusCode = 400;
+    error.code = 'PROJECT_CLOSED';
+    throw error;
+  }
+
   const effectiveDate = effectiveFrom ? new Date(effectiveFrom) : new Date();
 
   return prisma.$transaction(async (tx) => {
@@ -261,6 +311,7 @@ export default {
   updateClient,
   getProjects,
   createProject,
+  updateProject,
   updateProjectStatus,
   addProjectRate,
 };

@@ -180,6 +180,83 @@ export async function updateUserStatus(userId, { isActive }, currentAdminId) {
 }
 
 /**
+ * Update user details (name, email, accountType)
+ */
+export async function updateUser(userId, { name, email, accountType }, actorUser = null) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    const error = new Error('User not found.');
+    error.statusCode = 404;
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  const data = {};
+  if (name && name.trim()) data.name = name.trim();
+
+  if (email && email.trim().toLowerCase() !== user.email.toLowerCase()) {
+    const existing = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (existing && existing.id !== userId) {
+      const error = new Error('A user with this email address already exists.');
+      error.statusCode = 409;
+      error.code = 'EMAIL_ALREADY_EXISTS';
+      throw error;
+    }
+    data.email = email.trim().toLowerCase();
+  }
+
+  if (accountType && accountType !== user.accountType) {
+    if (!['EMPLOYEE', 'ADMIN'].includes(accountType)) {
+      const error = new Error('Account type must be either EMPLOYEE or ADMIN.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+
+    // Business Rule: An admin cannot remove their own administrator access
+    if (actorUser && actorUser.id === userId && accountType !== 'ADMIN') {
+      const error = new Error('You cannot remove administrator access from your own account.');
+      error.statusCode = 403;
+      error.code = 'SELF_DEMOTION_FORBIDDEN';
+      throw error;
+    }
+
+    // Business Rule: The last remaining active administrator cannot be demoted
+    if (user.accountType === 'ADMIN' && accountType !== 'ADMIN') {
+      const activeAdminCount = await prisma.user.count({
+        where: { accountType: 'ADMIN', isActive: true },
+      });
+      if (activeAdminCount <= 1) {
+        const error = new Error('Cannot demote the last remaining active administrator.');
+        error.statusCode = 403;
+        error.code = 'LAST_ADMIN_PROTECTED';
+        throw error;
+      }
+    }
+
+    data.accountType = accountType;
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      accountType: true,
+      isActive: true,
+      updatedAt: true,
+    },
+  });
+
+  bustUserCache(userId);
+  return updated;
+}
+
+/**
  * Assign employee to a project
  */
 export async function assignUserToProject(projectId, userId) {
@@ -206,6 +283,13 @@ export async function assignUserToProject(projectId, userId) {
     throw error;
   }
 
+  if (!user.isActive) {
+    const error = new Error('Cannot assign a deactivated user to projects.');
+    error.statusCode = 400;
+    error.code = 'USER_INACTIVE';
+    throw error;
+  }
+
   // Check existing active assignment
   const existingActive = await prisma.projectAssignment.findFirst({
     where: {
@@ -216,7 +300,10 @@ export async function assignUserToProject(projectId, userId) {
   });
 
   if (existingActive) {
-    return existingActive; // Already assigned
+    const error = new Error('User is already assigned to this project.');
+    error.statusCode = 400;
+    error.code = 'ALREADY_ASSIGNED';
+    throw error;
   }
 
   return prisma.projectAssignment.create({
@@ -266,6 +353,7 @@ export async function removeUserFromProject(projectId, userId) {
 export default {
   getUsers,
   createUser,
+  updateUser,
   updateUserStatus,
   assignUserToProject,
   removeUserFromProject,

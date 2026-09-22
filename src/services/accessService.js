@@ -1,4 +1,5 @@
 import prisma from '../config/db.js';
+import { bustUserCache } from '../middleware/auth.js';
 
 export const ALL_CAPABILITIES = [
   'VIEW_OTHER_RECORDS',
@@ -182,7 +183,27 @@ export async function grantCapability({
     throw error;
   }
 
-  return prisma.$transaction(async (tx) => {
+  // Check if user already holds an active, unexpired grant for this capability
+  const existingActive = await prisma.capabilityGrant.findFirst({
+    where: {
+      userId: targetUserId,
+      capabilityId: capability.id,
+      revokedAt: null,
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: new Date() } },
+      ],
+    },
+  });
+
+  if (existingActive) {
+    const error = new Error(`User already holds an active grant for capability "${capabilityCode}".`);
+    error.statusCode = 409;
+    error.code = 'CAPABILITY_ALREADY_GRANTED';
+    throw error;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
     // 1. Create the grant
     const grant = await tx.capabilityGrant.create({
       data: {
@@ -231,6 +252,9 @@ export async function grantCapability({
 
     return grant;
   });
+
+  bustUserCache(targetUserId);
+  return result;
 }
 
 /**
@@ -278,6 +302,9 @@ export async function revokeCapability({ actorId, grantId }) {
 
     return updatedGrant;
   });
+
+  bustUserCache(grant.userId);
+  return result;
 }
 
 /**

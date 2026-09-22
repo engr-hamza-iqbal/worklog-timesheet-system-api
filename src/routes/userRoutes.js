@@ -2,6 +2,7 @@ import express from 'express';
 import {
   handleGetUsers,
   handleCreateUser,
+  handleUpdateUser,
   handleUpdateUserStatus,
   handleAssignProject,
   handleRemoveAssignment,
@@ -16,6 +17,7 @@ router.use(authenticate);
 // User Management
 router.get('/users', handleGetUsers);
 router.post('/users', requireCapability('MANAGE_USERS'), handleCreateUser);
+router.put('/users/:id', requireCapability('MANAGE_USERS'), handleUpdateUser);
 router.patch('/users/:id/status', requireCapability('MANAGE_USERS'), handleUpdateUserStatus);
 
 // Project Assignments

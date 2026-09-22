@@ -31,6 +31,17 @@ export async function handleUpdateUserStatus(req, res, next) {
   }
 }
 
+export async function handleUpdateUser(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { name, email, accountType } = req.body;
+    const user = await userService.updateUser(id, { name, email, accountType }, req.user);
+    return sendSuccess(res, user, 'User updated successfully.');
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function handleAssignProject(req, res, next) {
   try {
     const { id: projectId } = req.params;
@@ -55,6 +66,7 @@ export async function handleRemoveAssignment(req, res, next) {
 export default {
   handleGetUsers,
   handleCreateUser,
+  handleUpdateUser,
   handleUpdateUserStatus,
   handleAssignProject,
   handleRemoveAssignment,
