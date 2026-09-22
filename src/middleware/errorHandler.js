@@ -5,7 +5,6 @@ export function errorHandler(err, req, res, next) {
   const message = err.message || 'Internal server error';
   const code = err.code || 'INTERNAL_ERROR';
 
-  // Only log unexpected server errors (500+)
   if (statusCode >= 500) {
     console.error('Internal Server Error:', err);
   }

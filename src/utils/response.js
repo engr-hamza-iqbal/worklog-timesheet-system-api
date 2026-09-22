@@ -1,6 +1,3 @@
-/**
- * Standardized API response format helpers
- */
 
 export function sendSuccess(res, data = {}, message = null, statusCode = 200) {
   return res.status(statusCode).json({

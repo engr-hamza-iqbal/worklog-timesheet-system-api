@@ -23,7 +23,6 @@ export async function handleLogin(req, res, next) {
 
 export async function handleGetMe(req, res, next) {
   try {
-    // req.user is populated by authenticate middleware
     const result = await authService.getCurrentUser(req.user.id);
     return sendSuccess(res, result, 'User profile and capabilities retrieved.', 200);
   } catch (err) {
@@ -33,7 +32,6 @@ export async function handleGetMe(req, res, next) {
 
 export async function handleLogout(req, res, next) {
   try {
-    // Stateless JWT: inform client to discard token
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
   } catch (err) {
     next(err);
