@@ -14,6 +14,7 @@ import timeEntryRoutes from './timeEntryRoutes.js';
 import reviewRoutes from './reviewRoutes.js';
 import timeOffRoutes from './timeOffRoutes.js';
 import reportRoutes from './reportRoutes.js';
+import analyticsRoutes from './analyticsRoutes.js';
 
 const router = express.Router();
 
@@ -39,6 +40,7 @@ router.use('/api/timesheets', timeEntryRoutes);
 router.use('/api/reviews', reviewRoutes);
 router.use('/api/time-off', timeOffRoutes);
 router.use('/api/reports', reportRoutes);
+router.use('/api/analytics', analyticsRoutes);
 
 // Capability test endpoints
 router.get(
