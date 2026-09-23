@@ -75,15 +75,30 @@ export async function updateClient(id, { name, isActive }) {
 /**
  * List projects, optionally filtered by clientId or activeOnly
  */
-export async function getProjects({ clientId, activeOnly = false } = {}) {
+export async function getProjects({ clientId, activeOnly = false, assignedUserId } = {}) {
   const where = {};
   if (clientId) where.clientId = clientId;
   if (activeOnly) {
     where.status = 'ACTIVE';
     where.client = { isActive: true };
   }
+  if (assignedUserId) {
+    where.assignments = { some: { userId: assignedUserId, removedAt: null } };
+  }
 
-  const projects = await prisma.project.findMany({
+  const projects = await prisma.project.findMany(assignedUserId ? {
+    where,
+    select: {
+      id: true,
+      name: true,
+      clientId: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      client: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  } : {
     where,
     include: {
       client: {
@@ -114,9 +129,9 @@ export async function getProjects({ clientId, activeOnly = false } = {}) {
     clientId: p.clientId,
     clientName: p.client.name,
     status: p.status,
-    currentRate: p.rates[0] ? Number(p.rates[0].ratePerHour) : null,
-    assignedEmployees: p.assignments.map((a) => a.user),
-    totalTimeEntries: p._count.timeEntries,
+    currentRate: p.rates?.[0] ? Number(p.rates[0].ratePerHour) : null,
+    assignedEmployees: p.assignments?.map((a) => a.user) || [],
+    totalTimeEntries: p._count?.timeEntries || 0,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   }));

@@ -4,6 +4,9 @@ import { PrismaClient } from '@prisma/client';
 // console overhead from query logs, which added measurable latency in development.
 const prisma = new PrismaClient({
   log: ['warn', 'error'],
+  transactionOptions: {
+    timeout: 30000,
+  },
 });
 
 export default prisma;

@@ -10,6 +10,8 @@ import authRoutes from './authRoutes.js';
 import clientProjectRoutes from './clientProjectRoutes.js';
 import userRoutes from './userRoutes.js';
 import accessRoutes from './accessRoutes.js';
+import timeEntryRoutes from './timeEntryRoutes.js';
+import reviewRoutes from './reviewRoutes.js';
 
 const router = express.Router();
 
@@ -31,6 +33,8 @@ router.use('/api/auth', authRoutes);
 router.use('/api', clientProjectRoutes);
 router.use('/api', userRoutes);
 router.use('/api/access', accessRoutes);
+router.use('/api/timesheets', timeEntryRoutes);
+router.use('/api/reviews', reviewRoutes);
 
 // Capability test endpoints
 router.get(

@@ -198,6 +198,7 @@ model TimeEntry {
   status                TimeEntryStatus @default(DRAFT)
   currentRevisionNumber Int             @default(1)
   approvedRateSnapshot  Decimal?        @db.Decimal(10, 2)
+  deletedAt             DateTime?
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
 
