@@ -34,10 +34,11 @@ export async function handleUpdateClient(req, res, next) {
 
 export async function handleGetProjects(req, res, next) {
   try {
-    const { clientId, activeOnly } = req.query;
+    const { clientId, activeOnly, assignedToMe } = req.query;
     const projects = await clientProjectService.getProjects({
       clientId,
       activeOnly: activeOnly === 'true',
+      assignedUserId: assignedToMe === 'true' ? req.user.id : undefined,
     });
     return sendSuccess(res, projects, 'Projects retrieved successfully.');
   } catch (err) {
