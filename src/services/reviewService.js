@@ -79,6 +79,10 @@ async function buildReviewerScope(reviewerUser) {
  * @param {object} filters       { userId?, projectId?, userQuery?, projectQuery?, startDate?, endDate? }
  */
 export async function getReviewQueue(reviewerUser, filters = {}) {
+  if (filters.startDate && filters.endDate && filters.endDate < filters.startDate) {
+    throw Object.assign(new Error('End date cannot be earlier than start date.'), { status: 400 });
+  }
+
   const scope = await buildReviewerScope(reviewerUser);
 
   const where = {
