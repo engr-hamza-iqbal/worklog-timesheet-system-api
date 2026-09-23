@@ -15,7 +15,8 @@
     "prisma:studio": "node ./node_modules/prisma/build/index.js studio",
     "studio": "node ./node_modules/prisma/build/index.js studio",
     "test:auth": "node test/verifyAuth.js",
-    "test:timesheet": "node test/verifyTimesheetFlow.js"
+    "test:timesheet": "node test/verifyTimesheetFlow.js",
+    "test:timeoff": "node test/verifyTimeOffFlow.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
