@@ -1,5 +1,5 @@
 import prisma from '../config/db.js';
-import { checkUserCapability } from './accessService.js';
+import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -80,13 +80,28 @@ export async function updateTimeOffType(id, { name, description, isActive }) {
 }
 
 export async function getTimeOffRequests(actorUser, { userId, status, startDate, endDate } = {}) {
-  const targetUserId = userId || (actorUser.accountType === 'ADMIN' ? null : actorUser.id);
+  let targetUserId = userId || (actorUser.accountType === 'ADMIN' ? null : actorUser.id);
+  let allowedUserIds = null;
+  if (!userId && actorUser.accountType !== 'ADMIN') {
+    const capabilities = await getUserActiveCapabilities(actorUser);
+    const decideGrant = capabilities.DECIDE_TIME_OFF;
+    if (decideGrant?.isGlobal) {
+      targetUserId = null;
+    } else if (decideGrant?.allowedUserIds?.length) {
+      targetUserId = null;
+      allowedUserIds = decideGrant.allowedUserIds;
+    }
+  }
   if (targetUserId && targetUserId !== actorUser.id && actorUser.accountType !== 'ADMIN') {
     const canView = await checkUserCapability(actorUser, 'VIEW_OTHER_RECORDS', { targetUserId });
     if (!canView) fail('You can only view your own time-off requests.', 403);
   }
 
-  const where = { ...(targetUserId ? { userId: targetUserId } : {}), ...(status ? { status } : {}) };
+  const where = {
+    ...(targetUserId ? { userId: targetUserId } : {}),
+    ...(allowedUserIds ? { userId: { in: allowedUserIds } } : {}),
+    ...(status ? { status } : {}),
+  };
   if (startDate || endDate) {
     where.days = { some: {
       ...(startDate ? { date: { gte: dateOnly(startDate) } } : {}),

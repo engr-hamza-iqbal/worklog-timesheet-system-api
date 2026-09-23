@@ -28,6 +28,7 @@ async function runTests() {
   try {
     const adminToken = await login('admin@worklog.local');
     const bobToken = await login('bob@worklog.local');
+    const carolToken = await login('carol@worklog.local');
     const evaToken = await login('eva@worklog.local');
     const types = await request('/api/time-off/types', { token: bobToken });
     assert(types.status === 200 && types.body.data.length > 0, 'Time-off types are unavailable.');
@@ -45,6 +46,9 @@ async function runTests() {
 
     const selfDecision = await request(`/api/time-off/requests/${requestId}/decide`, { method: 'POST', token: bobToken, body: { decision: 'APPROVED' } });
     assert(selfDecision.status === 403, 'Employee could decide their own time-off request.');
+
+    const carolQueue = await request('/api/time-off/requests?status=PENDING', { token: carolToken });
+    assert(carolQueue.status === 200 && carolQueue.body.data.some((item) => item.id === requestId), 'Global DECIDE_TIME_OFF user could not see another employee request.');
 
     const evaDecision = await request(`/api/time-off/requests/${requestId}/decide`, { method: 'POST', token: evaToken, body: { decision: 'APPROVED' } });
     assert(evaDecision.status === 403, 'User without DECIDE_TIME_OFF could decide a request.');
