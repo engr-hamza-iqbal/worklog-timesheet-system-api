@@ -69,3 +69,19 @@ jobs:
           PORT: 5001
           NODE_ENV: test
         run: npm run test:auth
+
+      - name: Run Timesheet & Review Workflow Tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/worklog_test_db?schema=public
+          JWT_SECRET: test-super-secret-jwt-key-for-ci-pipeline
+          PORT: 5001
+          NODE_ENV: test
+        run: npm run test:timesheet
+
+      - name: Run Time Off Workflow Tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/worklog_test_db?schema=public
+          JWT_SECRET: test-super-secret-jwt-key-for-ci-pipeline
+          PORT: 5001
+          NODE_ENV: test
+        run: npm run test:timeoff
