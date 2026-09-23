@@ -59,7 +59,7 @@ async function runTests() {
     const second = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate, endDate, reason: 'Second family appointment' } });
     assert(second.status === 201, 'A cancelled time-off period could not be requested again.');
     const approved = await request(`/api/time-off/requests/${second.body.data.id}/decide`, { method: 'POST', token: adminToken, body: { decision: 'APPROVED' } });
-    assert(approved.status === 200 && approved.body.data.status === 'APPROVED', 'Administrator could not approve a pending request.');
+    assert(approved.status === 200 && approved.body.data.status === 'APPROVED', `Administrator could not approve a pending request: ${approved.status} ${JSON.stringify(approved.body)}`);
 
     console.log('Time-off flow verification passed.');
   } finally {

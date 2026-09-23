@@ -1,4 +1,5 @@
 import prisma from '../config/db.js';
+import { emailLink, escapeHtml, queueEmail } from './emailService.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -232,7 +233,10 @@ export async function returnEntry(reviewerUser, entryId, comment) {
 
   const scope = await buildReviewerScope(reviewerUser);
 
-  const entry = await prisma.timeEntry.findUnique({ where: { id: entryId } });
+  const entry = await prisma.timeEntry.findUnique({
+    where: { id: entryId },
+    include: { user: { select: { id: true, name: true, email: true } }, project: { select: { name: true } } },
+  });
   if (!entry) {
     throw Object.assign(new Error('Time entry not found.'), { status: 404 });
   }
@@ -266,6 +270,16 @@ export async function returnEntry(reviewerUser, entryId, comment) {
       performedById:  reviewerUser.id,
       comment:        comment.trim(),
     });
+  });
+
+  queueEmail({
+    recipientUserId: entry.user.id,
+    recipientEmail: entry.user.email,
+    emailType: 'ENTRY_RETURNED',
+    subject: 'Your time entry was returned for correction',
+    relatedEntityType: 'TimeEntry',
+    relatedEntityId: entry.id,
+    html: `<p>Hi ${escapeHtml(entry.user.name)},</p><p>Your ${entry.durationMinutes / 60} hour entry for <strong>${escapeHtml(entry.project.name)}</strong> on ${toIsoDate(entry.workDate)} was returned.</p><p><strong>Comment:</strong> ${escapeHtml(comment.trim())}</p><p><a href="${emailLink('/timesheet')}">Open your timesheet</a></p>`,
   });
 
   return { entryId, status: 'RETURNED' };

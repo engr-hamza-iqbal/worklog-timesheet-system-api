@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
+import { emailLink, escapeHtml, queueEmail } from './emailService.js';
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -151,7 +152,10 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
 }
 
 export async function cancelTimeOffRequest(actorUser, requestId) {
-  const request = await prisma.timeOffRequest.findUnique({ where: { id: requestId } });
+  const request = await prisma.timeOffRequest.findUnique({
+    where: { id: requestId },
+    include: { user: { select: { id: true, name: true, email: true } }, timeOffType: { select: { name: true } } },
+  });
   if (!request) fail('Time-off request not found.', 404);
   if (request.userId !== actorUser.id) fail('You can only cancel your own request.', 403);
   if (request.status !== 'PENDING') fail('Only pending requests can be cancelled.');
@@ -174,7 +178,13 @@ async function assertCanDecide(actorUser, request) {
 export async function decideTimeOffRequest(actorUser, requestId, decision, comment) {
   if (!['APPROVED', 'DECLINED'].includes(decision)) fail('Decision must be APPROVED or DECLINED.');
   if (decision === 'DECLINED' && (!comment?.trim() || comment.trim().length < 5)) fail('A decline comment of at least 5 characters is required.');
-  const request = await prisma.timeOffRequest.findUnique({ where: { id: requestId } });
+  const request = await prisma.timeOffRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+      timeOffType: { select: { name: true } },
+    },
+  });
   if (!request) fail('Time-off request not found.', 404);
   if (request.status !== 'PENDING') fail('Only pending requests can be decided.');
   await assertCanDecide(actorUser, request);
@@ -183,5 +193,15 @@ export async function decideTimeOffRequest(actorUser, requestId, decision, comme
     prisma.timeOffRequest.update({ where: { id: requestId }, data: { status: decision, decisionComment: comment?.trim() || null, decidedById: actorUser.id, decidedAt: new Date() } }),
     prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId }, data: { status: decision } }),
   ]);
+
+  queueEmail({
+    recipientUserId: request.user.id,
+    recipientEmail: request.user.email,
+    emailType: 'TIME_OFF_DECIDED',
+    subject: `Your time-off request was ${decision.toLowerCase()}`,
+    relatedEntityType: 'TimeOffRequest',
+    relatedEntityId: request.id,
+    html: `<p>Hi ${escapeHtml(request.user.name)},</p><p>Your ${escapeHtml(request.timeOffType.name)} request from ${dateKey(request.startDate)} to ${dateKey(request.endDate)} was <strong>${decision.toLowerCase()}</strong>.</p>${comment?.trim() ? `<p><strong>Comment:</strong> ${escapeHtml(comment.trim())}</p>` : ''}<p><a href="${emailLink('/time-off')}">Open time off</a></p>`,
+  });
   return { id: requestId, status: decision };
 }

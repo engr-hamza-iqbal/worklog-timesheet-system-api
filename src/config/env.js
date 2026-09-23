@@ -9,6 +9,8 @@ export const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-jwt-secret-key
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 export const FRONTEND_URL = process.env.FRONTEND_URL;
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*';
+export const RESEND_API_KEY = process.env.RESEND_API_KEY;
+export const EMAIL_FROM = process.env.EMAIL_FROM;
 
 export default {
   PORT,
@@ -18,4 +20,6 @@ export default {
   JWT_EXPIRES_IN,
   FRONTEND_URL,
   CORS_ORIGIN,
+  RESEND_API_KEY,
+  EMAIL_FROM,
 };

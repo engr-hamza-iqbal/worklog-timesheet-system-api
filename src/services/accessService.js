@@ -100,15 +100,15 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
     return true;
   }
 
-  if (scope.targetProjectId) {
-    return capability.allowedProjectIds.includes(scope.targetProjectId);
-  }
+  const hasTarget = Boolean(scope.targetProjectId || scope.targetUserId);
+  if (!hasTarget) return false;
 
-  if (scope.targetUserId) {
-    return capability.allowedUserIds.includes(scope.targetUserId);
-  }
+  const projectAllowed = scope.targetProjectId
+    && capability.allowedProjectIds.includes(scope.targetProjectId);
+  const userAllowed = scope.targetUserId
+    && capability.allowedUserIds.includes(scope.targetUserId);
 
-  return true;
+  return Boolean(projectAllowed || userAllowed);
 }
 
 /**
