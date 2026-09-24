@@ -389,6 +389,190 @@ async function main() {
   });
 
   console.log('Seeded Capability Grants, Scopes, and Access Audit Logs.');
+
+  // 11. Seed Sample Time Entries across employees and projects
+  // Dates across September 2026
+  const sampleEntries = [
+    // Bob on Acme Core Platform (APPROVED)
+    {
+      user: employeeBob,
+      project: projectAcmeCore,
+      workDate: new Date('2026-09-15T00:00:00Z'),
+      durationMinutes: 480, // 8h
+      description: 'Architected and built authentication and authorization middleware.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeBob,
+      project: projectAcmeCore,
+      workDate: new Date('2026-09-16T00:00:00Z'),
+      durationMinutes: 360, // 6h
+      description: 'Implemented capability grant verification and scoping logic.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeBob,
+      project: projectTechNovaCloud,
+      workDate: new Date('2026-09-17T00:00:00Z'),
+      durationMinutes: 420, // 7h
+      description: 'Provisioned cloud resources and PostgreSQL database cluster.',
+      status: 'APPROVED',
+      rate: 85.0,
+    },
+    {
+      user: employeeBob,
+      project: projectTechNovaCloud,
+      workDate: new Date('2026-09-18T00:00:00Z'),
+      durationMinutes: 300, // 5h
+      description: 'Tested connection poolers and latency benchmarks.',
+      status: 'SUBMITTED',
+      rate: null,
+    },
+    // Carol on Acme Core Platform (APPROVED & RETURNED)
+    {
+      user: employeeCarol,
+      project: projectAcmeCore,
+      workDate: new Date('2026-09-15T00:00:00Z'),
+      durationMinutes: 450, // 7.5h
+      description: 'Designed relational database models, constraints, and audit logs.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeCarol,
+      project: projectAcmeCore,
+      workDate: new Date('2026-09-16T00:00:00Z'),
+      durationMinutes: 480, // 8h
+      description: 'Implemented financial reporting queries and SQL aggregations.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeCarol,
+      project: projectAcmeCore,
+      workDate: new Date('2026-09-17T00:00:00Z'),
+      durationMinutes: 240, // 4h
+      description: 'Wrote unit tests for rate snapshot calculations.',
+      status: 'RETURNED',
+      rate: null,
+    },
+    // Dan on TechNova Cloud (APPROVED)
+    {
+      user: employeeDan,
+      project: projectTechNovaCloud,
+      workDate: new Date('2026-09-15T00:00:00Z'),
+      durationMinutes: 480, // 8h
+      description: 'Implemented Docker container build scripts and CI/CD pipelines.',
+      status: 'APPROVED',
+      rate: 85.0,
+    },
+    {
+      user: employeeDan,
+      project: projectTechNovaCloud,
+      workDate: new Date('2026-09-16T00:00:00Z'),
+      durationMinutes: 360, // 6h
+      description: 'Configured SSL certificates and reverse proxy routing.',
+      status: 'APPROVED',
+      rate: 85.0,
+    },
+    // Eva on Acme Mobile App (APPROVED & SUBMITTED)
+    {
+      user: employeeEva,
+      project: projectAcmeMobile,
+      workDate: new Date('2026-09-15T00:00:00Z'),
+      durationMinutes: 420, // 7h
+      description: 'Built mobile responsive timesheet entry grid with keyboard navigation.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeEva,
+      project: projectAcmeMobile,
+      workDate: new Date('2026-09-16T00:00:00Z'),
+      durationMinutes: 480, // 8h
+      description: 'Integrated review queue approval flow and multi-entry selection.',
+      status: 'APPROVED',
+      rate: 70.0,
+    },
+    {
+      user: employeeEva,
+      project: projectAcmeMobile,
+      workDate: new Date('2026-09-17T00:00:00Z'),
+      durationMinutes: 300, // 5h
+      description: 'Refined date pickers, filter resets, and error handling.',
+      status: 'SUBMITTED',
+      rate: null,
+    },
+  ];
+
+  for (const item of sampleEntries) {
+    const entry = await prisma.timeEntry.create({
+      data: {
+        userId: item.user.id,
+        projectId: item.project.id,
+        workDate: item.workDate,
+        durationMinutes: item.durationMinutes,
+        description: item.description,
+        status: item.status,
+        approvedRateSnapshot: item.rate,
+        currentRevisionNumber: 1,
+      },
+    });
+
+    await prisma.timeEntryRevision.create({
+      data: {
+        timeEntryId: entry.id,
+        revisionNumber: 1,
+        projectId: item.project.id,
+        workDate: item.workDate,
+        durationMinutes: item.durationMinutes,
+        description: item.description,
+        billingRateSnapshot: item.rate,
+        createdById: item.user.id,
+      },
+    });
+
+    await prisma.timeEntryHistory.create({
+      data: {
+        timeEntryId: entry.id,
+        action: item.status === 'APPROVED' ? 'APPROVE' : item.status === 'RETURNED' ? 'RETURN' : item.status === 'SUBMITTED' ? 'SUBMIT' : 'CREATE',
+        previousStatus: item.status === 'APPROVED' ? 'SUBMITTED' : item.status === 'RETURNED' ? 'SUBMITTED' : null,
+        newStatus: item.status,
+        performedById: item.status === 'APPROVED' ? adminAlice.id : item.user.id,
+        comment: item.status === 'RETURNED' ? 'Please elaborate on the description of work done.' : null,
+      },
+    });
+  }
+  console.log('Seeded 12 sample Time Entries across projects and statuses.');
+
+  // 12. Seed an approved Time Off request for Dan on 2026-09-18
+  const annualLeaveType = await prisma.timeOffType.findFirst({ where: { name: 'Annual Leave' } });
+  if (annualLeaveType) {
+    const leaveDate = new Date('2026-09-18T00:00:00Z');
+    const danLeave = await prisma.timeOffRequest.create({
+      data: {
+        userId: employeeDan.id,
+        timeOffTypeId: annualLeaveType.id,
+        startDate: leaveDate,
+        endDate: leaveDate,
+        reason: 'Scheduled personal annual leave day.',
+        status: 'APPROVED',
+        decidedById: adminAlice.id,
+        decidedAt: new Date('2026-09-10T00:00:00Z'),
+        days: {
+          create: [{
+            userId: employeeDan.id,
+            date: leaveDate,
+            status: 'APPROVED',
+          }],
+        },
+      },
+    });
+    console.log('Seeded approved Time Off Request for Dan (demonstrating missing timesheet exclusion).');
+  }
+
   console.log('--- Seed Completed Successfully (Node.js/JavaScript ESM) ---');
 }
 

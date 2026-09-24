@@ -108,7 +108,25 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
   const userAllowed = scope.targetUserId
     && capability.allowedUserIds.includes(scope.targetUserId);
 
-  return Boolean(projectAllowed || userAllowed);
+  if (projectAllowed || userAllowed) {
+    return true;
+  }
+
+  // If scoped to projects and checking a user, verify if targetUserId is assigned to any allowed project
+  if (scope.targetUserId && capability.allowedProjectIds.length > 0) {
+    const isAssigned = await prisma.projectAssignment.findFirst({
+      where: {
+        userId: scope.targetUserId,
+        projectId: { in: capability.allowedProjectIds },
+        removedAt: null,
+      },
+    });
+    if (isAssigned) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

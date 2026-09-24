@@ -1,6 +1,10 @@
 import prisma from '../config/db.js';
 import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
-import { emailLink, escapeHtml, queueEmail } from './emailService.js';
+import {
+  buildTimeOffDecidedEmail,
+  buildTimeOffReviewRequiredEmail,
+  queueEmail,
+} from './emailService.js';
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -88,9 +92,24 @@ export async function getTimeOffRequests(actorUser, { userId, status, startDate,
     const decideGrant = capabilities.DECIDE_TIME_OFF;
     if (decideGrant?.isGlobal) {
       targetUserId = null;
-    } else if (decideGrant?.allowedUserIds?.length) {
-      targetUserId = null;
-      allowedUserIds = decideGrant.allowedUserIds;
+    } else {
+      const allowed = new Set(decideGrant?.allowedUserIds || []);
+      if (decideGrant?.allowedProjectIds?.length) {
+        const assignments = await prisma.projectAssignment.findMany({
+          where: {
+            projectId: { in: decideGrant.allowedProjectIds },
+            removedAt: null,
+          },
+          select: { userId: true },
+        });
+        for (const a of assignments) {
+          allowed.add(a.userId);
+        }
+      }
+      if (allowed.size > 0) {
+        targetUserId = null;
+        allowedUserIds = Array.from(allowed);
+      }
     }
   }
   if (targetUserId && targetUserId !== actorUser.id && actorUser.accountType !== 'ADMIN') {
@@ -148,7 +167,54 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
     });
     return created;
   });
+
+  void notifyReviewersOfNewTimeOffRequest(actorUser, request);
+
   return formatRequest(request);
+}
+
+async function notifyReviewersOfNewTimeOffRequest(actorUser, request) {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { accountType: 'ADMIN', isActive: true, id: { not: actorUser.id } },
+      select: { id: true, name: true, email: true },
+    });
+
+    const potentialReviewers = await prisma.user.findMany({
+      where: { accountType: 'EMPLOYEE', isActive: true, id: { not: actorUser.id } },
+      select: { id: true, name: true, email: true },
+    });
+
+    const reviewersToNotify = [...admins];
+    for (const employee of potentialReviewers) {
+      const canDecide = await checkUserCapability(employee, 'DECIDE_TIME_OFF', { targetUserId: actorUser.id });
+      if (canDecide) {
+        reviewersToNotify.push(employee);
+      }
+    }
+
+    const emailContent = buildTimeOffReviewRequiredEmail({
+      employeeName: actorUser.name,
+      timeOffTypeName: request.timeOffType.name,
+      startDate: dateKey(request.startDate),
+      endDate: dateKey(request.endDate),
+      reason: request.reason,
+    });
+
+    for (const reviewer of reviewersToNotify) {
+      queueEmail({
+        recipientUserId: reviewer.id,
+        recipientEmail: reviewer.email,
+        emailType: 'TIME_OFF_REVIEW_REQUIRED',
+        subject: emailContent.subject,
+        relatedEntityType: 'TimeOffRequest',
+        relatedEntityId: request.id,
+        html: emailContent.html,
+      });
+    }
+  } catch (err) {
+    console.error('Failed to notify reviewers of time-off request:', err.message);
+  }
 }
 
 export async function cancelTimeOffRequest(actorUser, requestId) {
@@ -194,14 +260,23 @@ export async function decideTimeOffRequest(actorUser, requestId, decision, comme
     prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId }, data: { status: decision } }),
   ]);
 
+  const emailContent = buildTimeOffDecidedEmail({
+    recipientName: request.user.name,
+    timeOffTypeName: request.timeOffType.name,
+    startDate: dateKey(request.startDate),
+    endDate: dateKey(request.endDate),
+    decision,
+    comment: comment?.trim() || null,
+  });
+
   queueEmail({
     recipientUserId: request.user.id,
     recipientEmail: request.user.email,
     emailType: 'TIME_OFF_DECIDED',
-    subject: `Your time-off request was ${decision.toLowerCase()}`,
+    subject: emailContent.subject,
     relatedEntityType: 'TimeOffRequest',
     relatedEntityId: request.id,
-    html: `<p>Hi ${escapeHtml(request.user.name)},</p><p>Your ${escapeHtml(request.timeOffType.name)} request from ${dateKey(request.startDate)} to ${dateKey(request.endDate)} was <strong>${decision.toLowerCase()}</strong>.</p>${comment?.trim() ? `<p><strong>Comment:</strong> ${escapeHtml(comment.trim())}</p>` : ''}<p><a href="${emailLink('/time-off')}">Open time off</a></p>`,
+    html: emailContent.html,
   });
   return { id: requestId, status: decision };
 }

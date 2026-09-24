@@ -80,3 +80,94 @@ export async function getReports(filters = {}) {
 
   return { startDate, endDate, byProject, byClient, byEmployee, byStatus };
 }
+
+export async function getMissingTimesheets(targetDate) {
+  const checkDate = date(targetDate, new Date().toISOString().slice(0, 10));
+
+  const missingEmployees = await prisma.$queryRaw(Prisma.sql`
+    SELECT u."id" AS "userId", u."name" AS "userName", u."email"
+    FROM "User" u
+    WHERE u."accountType" = 'EMPLOYEE'
+      AND u."isActive" = true
+      AND NOT EXISTS (
+        SELECT 1 FROM "TimeEntry" te
+        WHERE te."userId" = u."id"
+          AND te."workDate" = ${checkDate}::date
+          AND te."deletedAt" IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "TimeOffDay" tod
+        WHERE tod."userId" = u."id"
+          AND tod."date" = ${checkDate}::date
+          AND tod."status" = 'APPROVED'
+      )
+    ORDER BY u."name" ASC
+  `);
+
+  const startOfDay = new Date();
+  startOfDay.setUTCHours(0, 0, 0, 0);
+
+  const existingLogs = await prisma.emailLog.findMany({
+    where: {
+      emailType: 'MISSING_TIMESHEET',
+      referenceDate: new Date(checkDate),
+      attemptedAt: { gte: startOfDay },
+      status: { in: ['SENT', 'PENDING'] },
+    },
+    select: { recipientUserId: true },
+  });
+
+  const chasedUserIds = new Set(existingLogs.map((l) => l.recipientUserId));
+
+  return {
+    date: checkDate,
+    employees: missingEmployees.map((emp) => ({
+      ...emp,
+      chasedToday: chasedUserIds.has(emp.userId),
+    })),
+  };
+}
+
+export async function chaseMissingTimesheets({ date: targetDate, userIds, actorUser }) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    throw Object.assign(new Error('Please select at least one employee to chase.'), { status: 400 });
+  }
+
+  const checkDate = date(targetDate, new Date().toISOString().slice(0, 10));
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds }, isActive: true },
+    select: { id: true, name: true, email: true },
+  });
+
+  const sent = [];
+  const skipped = [];
+
+  const { canSendMissingTimesheetChase, buildMissingTimesheetEmail, queueEmail } = await import('./emailService.js');
+
+  for (const user of users) {
+    const canSend = await canSendMissingTimesheetChase(user.id, checkDate);
+    if (!canSend) {
+      skipped.push({ userId: user.id, name: user.name, reason: 'Already reminded today' });
+      continue;
+    }
+
+    const emailContent = buildMissingTimesheetEmail({
+      recipientName: user.name,
+      missingDates: [checkDate],
+    });
+
+    queueEmail({
+      recipientUserId: user.id,
+      recipientEmail: user.email,
+      emailType: 'MISSING_TIMESHEET',
+      subject: emailContent.subject,
+      relatedEntityType: 'MissingTimesheet',
+      referenceDate: checkDate,
+      html: emailContent.html,
+    });
+
+    sent.push({ userId: user.id, name: user.name });
+  }
+
+  return { date: checkDate, sentCount: sent.length, skippedCount: skipped.length, sent, skipped };
+}

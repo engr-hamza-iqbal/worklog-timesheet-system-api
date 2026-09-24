@@ -1,5 +1,5 @@
 import prisma from '../config/db.js';
-import { emailLink, escapeHtml, queueEmail } from './emailService.js';
+import { buildEntryReturnedEmail, queueEmail } from './emailService.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -272,14 +272,22 @@ export async function returnEntry(reviewerUser, entryId, comment) {
     });
   });
 
+  const emailContent = buildEntryReturnedEmail({
+    recipientName: entry.user.name,
+    projectName: entry.project.name,
+    workDate: toIsoDate(entry.workDate),
+    hours: entry.durationMinutes / 60,
+    comment: comment.trim(),
+  });
+
   queueEmail({
     recipientUserId: entry.user.id,
     recipientEmail: entry.user.email,
     emailType: 'ENTRY_RETURNED',
-    subject: 'Your time entry was returned for correction',
+    subject: emailContent.subject,
     relatedEntityType: 'TimeEntry',
     relatedEntityId: entry.id,
-    html: `<p>Hi ${escapeHtml(entry.user.name)},</p><p>Your ${entry.durationMinutes / 60} hour entry for <strong>${escapeHtml(entry.project.name)}</strong> on ${toIsoDate(entry.workDate)} was returned.</p><p><strong>Comment:</strong> ${escapeHtml(comment.trim())}</p><p><a href="${emailLink('/timesheet')}">Open your timesheet</a></p>`,
+    html: emailContent.html,
   });
 
   return { entryId, status: 'RETURNED' };
