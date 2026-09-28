@@ -54,3 +54,19 @@ export async function handleGetEmailLogs(req, res) {
     return sendError(res, error.message, error.status || 500);
   }
 }
+
+export async function handleSendTestEmail(req, res) {
+  try {
+    const { recipientEmail, emailType } = req.body;
+    const { sendTestEmail } = await import('../services/emailService.js');
+    const result = await sendTestEmail({
+      recipientUserId: req.user?.id || null,
+      recipientEmail: recipientEmail || req.user?.email,
+      emailType: emailType || 'MISSING_TIMESHEET',
+    });
+    return sendSuccess(res, result, result.message);
+  } catch (error) {
+    return sendError(res, error.message, error.status || 500);
+  }
+}
+

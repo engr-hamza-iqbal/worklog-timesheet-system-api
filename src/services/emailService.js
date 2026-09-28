@@ -9,6 +9,7 @@ import {
   SMTP_USER,
   SMTP_PASS,
   SMTP_SECURE,
+  DEV_EMAIL_OVERRIDE,
 } from '../config/env.js';
 
 let transporter = null;
@@ -179,6 +180,7 @@ export function buildTimeOffReviewRequiredEmail({ recipientName, employeeName, t
 /**
  * Queue and dispatch an email asynchronously using Nodemailer.
  * Never delays the HTTP response and never throws an unhandled rejection.
+ * In development mode with Resend sandbox, routes or falls back to DEV_EMAIL_OVERRIDE so real test emails land in your inbox.
  */
 export function queueEmail({
   recipientUserId = null,
@@ -210,17 +212,70 @@ export function queueEmail({
 
       const mailClient = getTransporter();
 
-      await mailClient.sendMail({
-        from: EMAIL_FROM,
-        to: recipientEmail,
-        subject,
-        html,
-      });
+      // In development / testing environment, route to DEV_EMAIL_OVERRIDE if defined
+      let targetRecipient = recipientEmail;
+      let finalSubject = subject;
+      let finalHtml = html;
 
-      await prisma.emailLog.update({
-        where: { id: log.id },
-        data: { status: 'SENT', sentAt: new Date() },
-      });
+      const isDevSandbox = NODE_ENV !== 'production' && Boolean(DEV_EMAIL_OVERRIDE);
+      if (isDevSandbox && recipientEmail !== DEV_EMAIL_OVERRIDE) {
+        targetRecipient = DEV_EMAIL_OVERRIDE;
+        finalSubject = `[Dev to: ${recipientEmail}] ${subject}`;
+        finalHtml = `
+          <div style="background-color: #f8fafc; border: 1px dashed #94a3b8; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-family: sans-serif; font-size: 12px; color: #475569;">
+            <strong style="color: #0f172a;">Development Mode Notice:</strong> Intended recipient: <code>${escapeHtml(recipientEmail)}</code>.<br/>
+            Delivered to testing address <code>${escapeHtml(DEV_EMAIL_OVERRIDE)}</code> via Resend.
+          </div>
+          ${html}
+        `;
+      }
+
+      try {
+        await mailClient.sendMail({
+          from: EMAIL_FROM,
+          to: targetRecipient,
+          subject: finalSubject,
+          html: finalHtml,
+        });
+
+        await prisma.emailLog.update({
+          where: { id: log.id },
+          data: {
+            status: 'SENT',
+            sentAt: new Date(),
+            errorMessage: targetRecipient !== recipientEmail ? `Delivered in dev mode to: ${targetRecipient}` : null,
+          },
+        });
+      } catch (sendErr) {
+        // If Resend failed with 550 test restriction, fallback to DEV_EMAIL_OVERRIDE or registered email
+        if (sendErr.message?.includes('550') && DEV_EMAIL_OVERRIDE && targetRecipient !== DEV_EMAIL_OVERRIDE) {
+          const fallbackSubject = `[Dev to: ${recipientEmail}] ${subject}`;
+          const fallbackHtml = `
+            <div style="background-color: #f8fafc; border: 1px dashed #94a3b8; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-family: sans-serif; font-size: 12px; color: #475569;">
+              <strong style="color: #0f172a;">Development Fallback:</strong> Intended recipient: <code>${escapeHtml(recipientEmail)}</code>.<br/>
+              Delivered to verified sandbox address <code>${escapeHtml(DEV_EMAIL_OVERRIDE)}</code>.
+            </div>
+            ${html}
+          `;
+          await mailClient.sendMail({
+            from: EMAIL_FROM,
+            to: DEV_EMAIL_OVERRIDE,
+            subject: fallbackSubject,
+            html: fallbackHtml,
+          });
+
+          await prisma.emailLog.update({
+            where: { id: log.id },
+            data: {
+              status: 'SENT',
+              sentAt: new Date(),
+              errorMessage: `Delivered via fallback to: ${DEV_EMAIL_OVERRIDE}`,
+            },
+          });
+        } else {
+          throw sendErr;
+        }
+      }
     } catch (error) {
       if (log) {
         await prisma.emailLog
@@ -236,8 +291,78 @@ export function queueEmail({
   })();
 }
 
+/**
+ * Send a sample/test email for any of the 4 supported email types.
+ */
+export async function sendTestEmail({
+  recipientUserId = null,
+  recipientEmail,
+  emailType = 'MISSING_TIMESHEET',
+}) {
+  const targetEmail = recipientEmail || DEV_EMAIL_OVERRIDE || 'engr.hamzaiqbal.pk@gmail.com';
+  let emailContent;
+  let type = emailType;
+
+  switch (emailType) {
+    case 'ENTRY_RETURNED':
+      emailContent = buildEntryReturnedEmail({
+        recipientName: 'Team Member',
+        projectName: 'Client Onboarding & Timesheet',
+        workDate: new Date().toISOString().slice(0, 10),
+        hours: 4.5,
+        comment: 'Please provide more details on technical implementation steps before re-submitting.',
+      });
+      break;
+    case 'TIME_OFF_DECIDED':
+      emailContent = buildTimeOffDecidedEmail({
+        recipientName: 'Team Member',
+        timeOffTypeName: 'Annual Leave',
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
+        decision: 'APPROVED',
+        comment: 'Approved. Enjoy your time off!',
+      });
+      break;
+    case 'TIME_OFF_REVIEW_REQUIRED':
+      emailContent = buildTimeOffReviewRequiredEmail({
+        recipientName: 'Manager / Reviewer',
+        employeeName: 'Hamza Iqbal',
+        timeOffTypeName: 'Sick Leave',
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: new Date().toISOString().slice(0, 10),
+        reason: 'Medical consultation & recovery',
+      });
+      break;
+    case 'MISSING_TIMESHEET':
+    default:
+      type = 'MISSING_TIMESHEET';
+      emailContent = buildMissingTimesheetEmail({
+        recipientName: 'Team Member',
+        missingDates: [new Date().toISOString().slice(0, 10)],
+      });
+      break;
+  }
+
+  queueEmail({
+    recipientUserId,
+    recipientEmail: targetEmail,
+    emailType: type,
+    subject: `[Test] ${emailContent.subject}`,
+    html: emailContent.html,
+    referenceDate: new Date().toISOString().slice(0, 10),
+  });
+
+  return {
+    success: true,
+    message: `Test email (${type}) successfully queued for delivery to ${targetEmail}.`,
+    recipient: targetEmail,
+    emailType: type,
+  };
+}
+
 export default {
   queueEmail,
+  sendTestEmail,
   canSendMissingTimesheetChase,
   buildMissingTimesheetEmail,
   buildEntryReturnedEmail,

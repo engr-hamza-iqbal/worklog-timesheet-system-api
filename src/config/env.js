@@ -10,6 +10,7 @@ export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 export const FRONTEND_URL = process.env.FRONTEND_URL;
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*';
 export const RESEND_API_KEY = process.env.RESEND_API_KEY;
+export const DEV_EMAIL_OVERRIDE = process.env.DEV_EMAIL_OVERRIDE || 'engr.hamzaiqbal.pk@gmail.com';
 export const EMAIL_FROM = process.env.EMAIL_FROM || 'Work Log <onboarding@resend.dev>';
 export const SMTP_HOST = process.env.SMTP_HOST || (process.env.RESEND_API_KEY ? 'smtp.resend.com' : null);
 export const SMTP_PORT = Number(process.env.SMTP_PORT) || 465;
@@ -26,6 +27,7 @@ export default {
   FRONTEND_URL,
   CORS_ORIGIN,
   RESEND_API_KEY,
+  DEV_EMAIL_OVERRIDE,
   EMAIL_FROM,
   SMTP_HOST,
   SMTP_PORT,
