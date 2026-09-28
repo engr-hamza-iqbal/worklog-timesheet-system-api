@@ -9,7 +9,6 @@ import {
   SMTP_USER,
   SMTP_PASS,
   SMTP_SECURE,
-  DEV_EMAIL_OVERRIDE,
 } from '../config/env.js';
 
 let transporter = null;
@@ -17,10 +16,10 @@ let transporter = null;
 function getTransporter() {
   if (transporter) return transporter;
 
-  if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  if (SMTP_USER && SMTP_PASS) {
     transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
+      host: SMTP_HOST || 'smtp.gmail.com',
+      port: SMTP_PORT || 465,
       secure: SMTP_SECURE,
       auth: {
         user: SMTP_USER,
@@ -180,7 +179,6 @@ export function buildTimeOffReviewRequiredEmail({ recipientName, employeeName, t
 /**
  * Queue and dispatch an email asynchronously using Nodemailer.
  * Never delays the HTTP response and never throws an unhandled rejection.
- * In development mode with Resend sandbox, routes or falls back to DEV_EMAIL_OVERRIDE so real test emails land in your inbox.
  */
 export function queueEmail({
   recipientUserId = null,
@@ -212,70 +210,21 @@ export function queueEmail({
 
       const mailClient = getTransporter();
 
-      // In development / testing environment, route to DEV_EMAIL_OVERRIDE if defined
-      let targetRecipient = recipientEmail;
-      let finalSubject = subject;
-      let finalHtml = html;
+      await mailClient.sendMail({
+        from: EMAIL_FROM,
+        to: recipientEmail,
+        subject,
+        html,
+      });
 
-      const isDevSandbox = NODE_ENV !== 'production' && Boolean(DEV_EMAIL_OVERRIDE);
-      if (isDevSandbox && recipientEmail !== DEV_EMAIL_OVERRIDE) {
-        targetRecipient = DEV_EMAIL_OVERRIDE;
-        finalSubject = `[Dev to: ${recipientEmail}] ${subject}`;
-        finalHtml = `
-          <div style="background-color: #f8fafc; border: 1px dashed #94a3b8; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-family: sans-serif; font-size: 12px; color: #475569;">
-            <strong style="color: #0f172a;">Development Mode Notice:</strong> Intended recipient: <code>${escapeHtml(recipientEmail)}</code>.<br/>
-            Delivered to testing address <code>${escapeHtml(DEV_EMAIL_OVERRIDE)}</code> via Resend.
-          </div>
-          ${html}
-        `;
-      }
-
-      try {
-        await mailClient.sendMail({
-          from: EMAIL_FROM,
-          to: targetRecipient,
-          subject: finalSubject,
-          html: finalHtml,
-        });
-
-        await prisma.emailLog.update({
-          where: { id: log.id },
-          data: {
-            status: 'SENT',
-            sentAt: new Date(),
-            errorMessage: targetRecipient !== recipientEmail ? `Delivered in dev mode to: ${targetRecipient}` : null,
-          },
-        });
-      } catch (sendErr) {
-        // If Resend failed with 550 test restriction, fallback to DEV_EMAIL_OVERRIDE or registered email
-        if (sendErr.message?.includes('550') && DEV_EMAIL_OVERRIDE && targetRecipient !== DEV_EMAIL_OVERRIDE) {
-          const fallbackSubject = `[Dev to: ${recipientEmail}] ${subject}`;
-          const fallbackHtml = `
-            <div style="background-color: #f8fafc; border: 1px dashed #94a3b8; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-family: sans-serif; font-size: 12px; color: #475569;">
-              <strong style="color: #0f172a;">Development Fallback:</strong> Intended recipient: <code>${escapeHtml(recipientEmail)}</code>.<br/>
-              Delivered to verified sandbox address <code>${escapeHtml(DEV_EMAIL_OVERRIDE)}</code>.
-            </div>
-            ${html}
-          `;
-          await mailClient.sendMail({
-            from: EMAIL_FROM,
-            to: DEV_EMAIL_OVERRIDE,
-            subject: fallbackSubject,
-            html: fallbackHtml,
-          });
-
-          await prisma.emailLog.update({
-            where: { id: log.id },
-            data: {
-              status: 'SENT',
-              sentAt: new Date(),
-              errorMessage: `Delivered via fallback to: ${DEV_EMAIL_OVERRIDE}`,
-            },
-          });
-        } else {
-          throw sendErr;
-        }
-      }
+      await prisma.emailLog.update({
+        where: { id: log.id },
+        data: {
+          status: 'SENT',
+          sentAt: new Date(),
+          errorMessage: null,
+        },
+      });
     } catch (error) {
       if (log) {
         await prisma.emailLog
@@ -299,7 +248,7 @@ export async function sendTestEmail({
   recipientEmail,
   emailType = 'MISSING_TIMESHEET',
 }) {
-  const targetEmail = recipientEmail || DEV_EMAIL_OVERRIDE || 'engr.hamzaiqbal.pk@gmail.com';
+  const targetEmail = recipientEmail || SMTP_USER || 'engr.hamzaiqbal.pk@gmail.com';
   let emailContent;
   let type = emailType;
 
