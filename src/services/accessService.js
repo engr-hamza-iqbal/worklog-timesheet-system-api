@@ -345,6 +345,205 @@ export async function getAccessAuditLogs({ limit = 50, offset = 0 } = {}) {
   return { logs, total };
 }
 
+/**
+ * Grant multiple capabilities to a target user
+ */
+export async function grantCapabilitiesToUser({
+  actorId,
+  targetUserId,
+  capabilityCodes = [],
+  expiresAt = null,
+  scopeType = null,
+  targetUserIds = [],
+  targetProjectIds = [],
+}) {
+  if (actorId === targetUserId) {
+    const error = new Error('You cannot grant capabilities to your own account.');
+    error.statusCode = 403;
+    error.code = 'SELF_GRANT_FORBIDDEN';
+    throw error;
+  }
+
+  const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!targetUser) {
+    const error = new Error('Target user not found.');
+    error.statusCode = 404;
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  const results = [];
+  const uniqueCodes = [...new Set(capabilityCodes)];
+
+  for (const code of uniqueCodes) {
+    const capability = await prisma.capability.findUnique({ where: { code } });
+    if (!capability) continue;
+
+    const existingActive = await prisma.capabilityGrant.findFirst({
+      where: {
+        userId: targetUserId,
+        capabilityId: capability.id,
+        revokedAt: null,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } },
+        ],
+      },
+    });
+
+    if (existingActive) continue;
+
+    const grant = await prisma.$transaction(async (tx) => {
+      const g = await tx.capabilityGrant.create({
+        data: {
+          userId: targetUserId,
+          capabilityId: capability.id,
+          grantedById: actorId,
+          expiresAt: expiresAt ? new Date(expiresAt) : null,
+        },
+      });
+
+      if (scopeType === 'PROJECT' && Array.isArray(targetProjectIds) && targetProjectIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetProjectIds.map((projectId) => ({
+            grantId: g.id,
+            scopeType: 'PROJECT',
+            targetProjectId: projectId,
+          })),
+        });
+      } else if (scopeType === 'USER' && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetUserIds.map((uid) => ({
+            grantId: g.id,
+            scopeType: 'USER',
+            targetUserId: uid,
+          })),
+        });
+      }
+
+      await tx.accessAuditLog.create({
+        data: {
+          action: 'GRANT',
+          actorId,
+          targetUserId,
+          capabilityCode: code,
+          grantId: g.id,
+          details: {
+            scopeType: scopeType || 'GLOBAL',
+            expiresAt,
+            targetUserIds,
+            targetProjectIds,
+          },
+        },
+      });
+
+      return g;
+    });
+
+    results.push(grant);
+  }
+
+  bustUserCache(targetUserId);
+  return results;
+}
+
+/**
+ * Grant one capability to multiple target users
+ */
+export async function grantCapabilityToUsers({
+  actorId,
+  targetUserIds = [],
+  capabilityCode,
+  expiresAt = null,
+  scopeType = null,
+  targetScopeUserIds = [],
+  targetProjectIds = [],
+}) {
+  const capability = await prisma.capability.findUnique({ where: { code: capabilityCode } });
+  if (!capability) {
+    const error = new Error(`Capability "${capabilityCode}" does not exist.`);
+    error.statusCode = 400;
+    error.code = 'INVALID_CAPABILITY';
+    throw error;
+  }
+
+  const results = [];
+  const uniqueUserIds = [...new Set(targetUserIds)];
+
+  for (const uid of uniqueUserIds) {
+    if (uid === actorId) continue; // cannot grant to self
+
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (!user || !user.isActive) continue;
+
+    const existingActive = await prisma.capabilityGrant.findFirst({
+      where: {
+        userId: uid,
+        capabilityId: capability.id,
+        revokedAt: null,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } },
+        ],
+      },
+    });
+
+    if (existingActive) continue;
+
+    const grant = await prisma.$transaction(async (tx) => {
+      const g = await tx.capabilityGrant.create({
+        data: {
+          userId: uid,
+          capabilityId: capability.id,
+          grantedById: actorId,
+          expiresAt: expiresAt ? new Date(expiresAt) : null,
+        },
+      });
+
+      if (scopeType === 'PROJECT' && Array.isArray(targetProjectIds) && targetProjectIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetProjectIds.map((projectId) => ({
+            grantId: g.id,
+            scopeType: 'PROJECT',
+            targetProjectId: projectId,
+          })),
+        });
+      } else if (scopeType === 'USER' && Array.isArray(targetScopeUserIds) && targetScopeUserIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetScopeUserIds.map((tuid) => ({
+            grantId: g.id,
+            scopeType: 'USER',
+            targetUserId: tuid,
+          })),
+        });
+      }
+
+      await tx.accessAuditLog.create({
+        data: {
+          action: 'GRANT',
+          actorId,
+          targetUserId: uid,
+          capabilityCode,
+          grantId: g.id,
+          details: {
+            scopeType: scopeType || 'GLOBAL',
+            expiresAt,
+            targetScopeUserIds,
+            targetProjectIds,
+          },
+        },
+      });
+
+      return g;
+    });
+
+    results.push(grant);
+    bustUserCache(uid);
+  }
+
+  return results;
+}
+
 export default {
   ALL_CAPABILITIES,
   getUserActiveCapabilities,
@@ -352,6 +551,8 @@ export default {
   getSystemCapabilities,
   getUserGrants,
   grantCapability,
+  grantCapabilitiesToUser,
+  grantCapabilityToUsers,
   revokeCapability,
   getAccessAuditLogs,
 };

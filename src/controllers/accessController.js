@@ -24,13 +24,44 @@ export async function handleGrantCapability(req, res, next) {
   try {
     const {
       userId,
+      userIds,
       capabilityCode,
+      capabilityCodes,
       expiresAt,
       scopeType,
       targetUserIds,
       targetProjectIds,
     } = req.body;
 
+    // Case 1: Grant 1 capability to multiple target users
+    if (Array.isArray(userIds) && userIds.length > 0) {
+      const grants = await accessService.grantCapabilityToUsers({
+        actorId: req.user.id,
+        targetUserIds: userIds,
+        capabilityCode,
+        expiresAt,
+        scopeType,
+        targetScopeUserIds: targetUserIds,
+        targetProjectIds,
+      });
+      return sendSuccess(res, grants, 'Capability granted to selected users successfully.', 201);
+    }
+
+    // Case 2: Grant multiple capabilities to 1 user
+    if (Array.isArray(capabilityCodes) && capabilityCodes.length > 0) {
+      const grants = await accessService.grantCapabilitiesToUser({
+        actorId: req.user.id,
+        targetUserId: userId,
+        capabilityCodes,
+        expiresAt,
+        scopeType,
+        targetUserIds,
+        targetProjectIds,
+      });
+      return sendSuccess(res, grants, 'Capabilities granted to user successfully.', 201);
+    }
+
+    // Case 3: Grant 1 capability to 1 user (original single grant)
     const grant = await accessService.grantCapability({
       actorId: req.user.id,
       targetUserId: userId,
