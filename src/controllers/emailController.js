@@ -4,7 +4,7 @@ import { sendSuccess, sendError } from '../utils/response.js';
 export async function handleGetEmailLogs(req, res) {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
     const { emailType, status, search } = req.query;
