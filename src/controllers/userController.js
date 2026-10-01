@@ -3,7 +3,7 @@ import { sendSuccess } from '../utils/response.js';
 
 export async function handleGetUsers(req, res, next) {
   try {
-    const users = await userService.getUsers();
+    const users = await userService.getUsers(req.user);
     return sendSuccess(res, users, 'Users retrieved successfully.');
   } catch (err) {
     next(err);

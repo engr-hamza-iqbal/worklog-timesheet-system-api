@@ -5,8 +5,14 @@ import { bustUserCache } from '../middleware/auth.js';
 /**
  * List all users with assignment counts
  */
-export async function getUsers() {
+export async function getUsers(actor = null) {
+  const where = {};
+  if (actor && actor.accountType !== 'ADMIN') {
+    where.accountType = { not: 'ADMIN' };
+  }
+
   const users = await prisma.user.findMany({
+    where,
     select: {
       id: true,
       name: true,
@@ -283,6 +289,13 @@ export async function assignUserToProject(projectId, userId) {
     throw error;
   }
 
+  if (user.accountType === 'ADMIN') {
+    const error = new Error('Administrators cannot be assigned to projects.');
+    error.statusCode = 400;
+    error.code = 'ADMIN_CANNOT_BE_ASSIGNED';
+    throw error;
+  }
+
   if (!user.isActive) {
     const error = new Error('Cannot assign a deactivated user to projects.');
     error.statusCode = 400;
@@ -346,7 +359,7 @@ export async function assignUsersToProject(projectId, userIds) {
   const created = [];
   for (const uid of uniqueUserIds) {
     const user = await prisma.user.findUnique({ where: { id: uid } });
-    if (!user || !user.isActive) continue;
+    if (!user || !user.isActive || user.accountType === 'ADMIN') continue;
 
     const existingActive = await prisma.projectAssignment.findFirst({
       where: {
@@ -388,6 +401,13 @@ export async function assignUserToProjects(userId, projectIds) {
     const error = new Error('User not found.');
     error.statusCode = 404;
     error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  if (user.accountType === 'ADMIN') {
+    const error = new Error('Administrators cannot be assigned to projects.');
+    error.statusCode = 400;
+    error.code = 'ADMIN_CANNOT_BE_ASSIGNED';
     throw error;
   }
 

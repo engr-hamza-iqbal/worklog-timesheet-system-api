@@ -22,8 +22,31 @@ router.put('/users/:id', requireCapability('MANAGE_USERS'), handleUpdateUser);
 router.patch('/users/:id/status', requireCapability('MANAGE_USERS'), handleUpdateUserStatus);
 
 // Project Assignments
-router.post('/projects/:id/assignments', requireCapability('ASSIGN_PROJECTS'), handleAssignProject);
-router.post('/users/:id/assignments', requireCapability('ASSIGN_PROJECTS'), handleAssignProjectsToUser);
-router.delete('/projects/:id/assignments/:userId', requireCapability('ASSIGN_PROJECTS'), handleRemoveAssignment);
+router.post(
+  '/projects/:id/assignments',
+  requireCapability('ASSIGN_PROJECTS', (req) => ({
+    targetProjectId: req.params.id,
+    targetUserId: req.body?.userId,
+    targetUserIds: req.body?.userIds,
+  })),
+  handleAssignProject
+);
+router.post(
+  '/users/:id/assignments',
+  requireCapability('ASSIGN_PROJECTS', (req) => ({
+    targetUserId: req.params.id,
+    targetProjectId: req.body?.projectId,
+    targetProjectIds: req.body?.projectIds,
+  })),
+  handleAssignProjectsToUser
+);
+router.delete(
+  '/projects/:id/assignments/:userId',
+  requireCapability('ASSIGN_PROJECTS', (req) => ({
+    targetProjectId: req.params.id,
+    targetUserId: req.params.userId,
+  })),
+  handleRemoveAssignment
+);
 
 export default router;

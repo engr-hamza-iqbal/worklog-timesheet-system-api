@@ -100,15 +100,24 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
     return true;
   }
 
-  const hasTarget = Boolean(scope.targetProjectId || scope.targetUserId);
+  const hasTarget = Boolean(
+    scope.targetProjectId ||
+    scope.targetUserId ||
+    (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0) ||
+    (Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0)
+  );
   if (!hasTarget) return false;
 
   const projectAllowed = scope.targetProjectId
     && capability.allowedProjectIds.includes(scope.targetProjectId);
+  const projectsAllowed = Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0
+    && scope.targetProjectIds.every((pid) => capability.allowedProjectIds.includes(pid));
   const userAllowed = scope.targetUserId
     && capability.allowedUserIds.includes(scope.targetUserId);
+  const usersAllowed = Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0
+    && scope.targetUserIds.every((uid) => capability.allowedUserIds.includes(uid));
 
-  if (projectAllowed || userAllowed) {
+  if (projectAllowed || projectsAllowed || userAllowed || usersAllowed) {
     return true;
   }
 
