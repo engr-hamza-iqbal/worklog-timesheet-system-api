@@ -60,6 +60,7 @@ export async function getUsers(actor = null) {
     updatedAt: u.updatedAt,
     activeAssignments: u.assignments.map((a) => a.project),
     activeCapabilitiesCount: u.capabilityGrantsReceived.length,
+    activeCapabilityCodes: u.capabilityGrantsReceived.map((g) => g.capability.code),
   }));
 }
 

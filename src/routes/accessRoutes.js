@@ -4,6 +4,7 @@ import {
   handleGetUserGrants,
   handleGrantCapability,
   handleRevokeCapability,
+  handleRevokeCapabilities,
   handleGetAuditLogs,
 } from '../controllers/accessController.js';
 import { authenticate } from '../middleware/auth.js';
@@ -21,6 +22,7 @@ router.use(requireAdmin());
 
 router.get('/users/:userId/grants', handleGetUserGrants);
 router.post('/grants', handleGrantCapability);
+router.post('/grants/revoke', handleRevokeCapabilities);
 router.post('/grants/:grantId/revoke', handleRevokeCapability);
 router.get('/audit-logs', handleGetAuditLogs);
 

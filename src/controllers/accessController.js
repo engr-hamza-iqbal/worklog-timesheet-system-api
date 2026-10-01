@@ -91,6 +91,38 @@ export async function handleRevokeCapability(req, res, next) {
   }
 }
 
+export async function handleRevokeCapabilities(req, res, next) {
+  try {
+    const { grantIds, capabilityCode, userIds } = req.body;
+
+    // Case 1: Revoke a capability from multiple users
+    if (capabilityCode && Array.isArray(userIds) && userIds.length > 0) {
+      const results = await accessService.revokeCapabilityFromUsers({
+        actorId: req.user.id,
+        capabilityCode,
+        userIds,
+      });
+      return sendSuccess(res, results, 'Capability revoked from selected users.');
+    }
+
+    // Case 2: Revoke multiple grants by grantIds
+    if (Array.isArray(grantIds) && grantIds.length > 0) {
+      const results = await accessService.revokeCapabilities({
+        actorId: req.user.id,
+        grantIds,
+      });
+      return sendSuccess(res, results, 'Capabilities revoked successfully.');
+    }
+
+    const error = new Error('Please provide grantIds or capabilityCode and userIds.');
+    error.statusCode = 400;
+    error.code = 'INVALID_ARGUMENTS';
+    throw error;
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function handleGetAuditLogs(req, res, next) {
   try {
     const { limit, offset } = req.query;
@@ -106,5 +138,6 @@ export default {
   handleGetUserGrants,
   handleGrantCapability,
   handleRevokeCapability,
+  handleRevokeCapabilities,
   handleGetAuditLogs,
 };

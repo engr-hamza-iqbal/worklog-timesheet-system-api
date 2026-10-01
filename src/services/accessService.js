@@ -25,6 +25,8 @@ export async function getUserActiveCapabilities(user) {
         isGlobal: true,
         allowedProjectIds: [],
         allowedUserIds: [],
+        allowedProjects: [],
+        allowedUsers: [],
       };
     }
     return adminCapabilities;
@@ -42,7 +44,12 @@ export async function getUserActiveCapabilities(user) {
     },
     include: {
       capability: true,
-      scopes: true,
+      scopes: {
+        include: {
+          targetProject: { select: { id: true, name: true } },
+          targetUser: { select: { id: true, name: true, email: true } },
+        },
+      },
     },
   });
 
@@ -56,6 +63,8 @@ export async function getUserActiveCapabilities(user) {
         isGlobal: false,
         allowedProjectIds: [],
         allowedUserIds: [],
+        allowedProjects: [],
+        allowedUsers: [],
       };
     }
 
@@ -67,10 +76,19 @@ export async function getUserActiveCapabilities(user) {
         if (scope.scopeType === 'PROJECT' && scope.targetProjectId) {
           if (!capabilityMap[code].allowedProjectIds.includes(scope.targetProjectId)) {
             capabilityMap[code].allowedProjectIds.push(scope.targetProjectId);
+            capabilityMap[code].allowedProjects.push({
+              id: scope.targetProjectId,
+              name: scope.targetProject?.name || scope.targetProjectId,
+            });
           }
         } else if (scope.scopeType === 'USER' && scope.targetUserId) {
           if (!capabilityMap[code].allowedUserIds.includes(scope.targetUserId)) {
             capabilityMap[code].allowedUserIds.push(scope.targetUserId);
+            capabilityMap[code].allowedUsers.push({
+              id: scope.targetUserId,
+              name: scope.targetUser?.name || scope.targetUserId,
+              email: scope.targetUser?.email || '',
+            });
           }
         }
       }
@@ -163,8 +181,14 @@ export async function getUserGrants(userId) {
       },
       scopes: {
         include: {
-          targetUser: { select: { id: true, name: true } },
-          targetProject: { select: { id: true, name: true } },
+          targetUser: { select: { id: true, name: true, email: true } },
+          targetProject: {
+            select: {
+              id: true,
+              name: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
         },
       },
     },
@@ -304,7 +328,7 @@ export async function revokeCapability({ actorId, grantId }) {
     return grant; // Already revoked
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const updatedGrant = await tx.capabilityGrant.update({
       where: { id: grantId },
       data: {
@@ -332,6 +356,100 @@ export async function revokeCapability({ actorId, grantId }) {
 
   bustUserCache(grant.userId);
   return result;
+}
+
+/**
+ * Revoke multiple capability grants immediately
+ */
+export async function revokeCapabilities({ actorId, grantIds }) {
+  if (!Array.isArray(grantIds) || grantIds.length === 0) {
+    const error = new Error('No grant IDs provided for revocation.');
+    error.statusCode = 400;
+    error.code = 'INVALID_ARGUMENTS';
+    throw error;
+  }
+
+  const grants = await prisma.capabilityGrant.findMany({
+    where: {
+      id: { in: grantIds },
+      revokedAt: null,
+    },
+    include: { capability: true },
+  });
+
+  if (grants.length === 0) {
+    return [];
+  }
+
+  const now = new Date();
+  const affectedUserIds = [...new Set(grants.map((g) => g.userId))];
+
+  const results = await prisma.$transaction(async (tx) => {
+    await tx.capabilityGrant.updateMany({
+      where: { id: { in: grants.map((g) => g.id) } },
+      data: {
+        revokedAt: now,
+        revokedById: actorId,
+      },
+    });
+
+    await tx.accessAuditLog.createMany({
+      data: grants.map((g) => ({
+        action: 'REVOKE',
+        actorId,
+        targetUserId: g.userId,
+        capabilityCode: g.capability.code,
+        grantId: g.id,
+        details: { revokedAt: now },
+      })),
+    });
+
+    return grants;
+  });
+
+  for (const uid of affectedUserIds) {
+    bustUserCache(uid);
+  }
+
+  return results;
+}
+
+/**
+ * Revoke a capability from multiple users
+ */
+export async function revokeCapabilityFromUsers({ actorId, capabilityCode, userIds }) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    const error = new Error('No user IDs provided.');
+    error.statusCode = 400;
+    error.code = 'INVALID_ARGUMENTS';
+    throw error;
+  }
+
+  const capability = await prisma.capability.findUnique({
+    where: { code: capabilityCode },
+  });
+
+  if (!capability) {
+    const error = new Error(`Capability "${capabilityCode}" does not exist.`);
+    error.statusCode = 400;
+    error.code = 'INVALID_CAPABILITY';
+    throw error;
+  }
+
+  const activeGrants = await prisma.capabilityGrant.findMany({
+    where: {
+      userId: { in: userIds },
+      capabilityId: capability.id,
+      revokedAt: null,
+    },
+  });
+
+  if (activeGrants.length === 0) {
+    return [];
+  }
+
+  const grantIds = activeGrants.map((g) => g.id);
+  return revokeCapabilities({ actorId, grantIds });
 }
 
 /**
@@ -563,5 +681,7 @@ export default {
   grantCapabilitiesToUser,
   grantCapabilityToUsers,
   revokeCapability,
+  revokeCapabilities,
+  revokeCapabilityFromUsers,
   getAccessAuditLogs,
 };
