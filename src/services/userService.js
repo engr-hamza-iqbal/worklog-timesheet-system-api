@@ -324,6 +324,118 @@ export async function assignUserToProject(projectId, userId) {
 }
 
 /**
+ * Assign multiple employees to a project
+ */
+export async function assignUsersToProject(projectId, userIds) {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) {
+    const error = new Error('Project not found.');
+    error.statusCode = 404;
+    error.code = 'PROJECT_NOT_FOUND';
+    throw error;
+  }
+
+  if (project.status === 'CLOSED') {
+    const error = new Error('Cannot assign employees to a closed project.');
+    error.statusCode = 400;
+    error.code = 'PROJECT_CLOSED';
+    throw error;
+  }
+
+  const uniqueUserIds = [...new Set(userIds)];
+  const created = [];
+  for (const uid of uniqueUserIds) {
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (!user || !user.isActive) continue;
+
+    const existingActive = await prisma.projectAssignment.findFirst({
+      where: {
+        projectId,
+        userId: uid,
+        removedAt: null,
+      },
+    });
+
+    if (!existingActive) {
+      const assignment = await prisma.projectAssignment.create({
+        data: {
+          projectId,
+          userId: uid,
+          assignedAt: new Date(),
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+          project: {
+            select: { id: true, name: true, status: true },
+          },
+        },
+      });
+      created.push(assignment);
+    }
+  }
+
+  return created;
+}
+
+/**
+ * Assign an employee to multiple projects
+ */
+export async function assignUserToProjects(userId, projectIds) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    const error = new Error('User not found.');
+    error.statusCode = 404;
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  if (!user.isActive) {
+    const error = new Error('Cannot assign a deactivated user to projects.');
+    error.statusCode = 400;
+    error.code = 'USER_INACTIVE';
+    throw error;
+  }
+
+  const uniqueProjectIds = [...new Set(projectIds)];
+  const created = [];
+  for (const pid of uniqueProjectIds) {
+    const project = await prisma.project.findUnique({ where: { id: pid } });
+    if (!project || project.status === 'CLOSED') continue;
+
+    const existingActive = await prisma.projectAssignment.findFirst({
+      where: {
+        projectId: pid,
+        userId,
+        removedAt: null,
+      },
+    });
+
+    if (!existingActive) {
+      const assignment = await prisma.projectAssignment.create({
+        data: {
+          projectId: pid,
+          userId,
+          assignedAt: new Date(),
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+          project: {
+            select: { id: true, name: true, status: true },
+          },
+        },
+      });
+      created.push(assignment);
+    }
+  }
+
+  return created;
+}
+
+/**
  * Soft-remove employee from project (retaining historical work records)
  */
 export async function removeUserFromProject(projectId, userId) {
@@ -356,5 +468,7 @@ export default {
   updateUser,
   updateUserStatus,
   assignUserToProject,
+  assignUsersToProject,
+  assignUserToProjects,
   removeUserFromProject,
 };

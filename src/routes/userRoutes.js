@@ -5,6 +5,7 @@ import {
   handleUpdateUser,
   handleUpdateUserStatus,
   handleAssignProject,
+  handleAssignProjectsToUser,
   handleRemoveAssignment,
 } from '../controllers/userController.js';
 import { authenticate } from '../middleware/auth.js';
@@ -22,6 +23,7 @@ router.patch('/users/:id/status', requireCapability('MANAGE_USERS'), handleUpdat
 
 // Project Assignments
 router.post('/projects/:id/assignments', requireCapability('ASSIGN_PROJECTS'), handleAssignProject);
+router.post('/users/:id/assignments', requireCapability('ASSIGN_PROJECTS'), handleAssignProjectsToUser);
 router.delete('/projects/:id/assignments/:userId', requireCapability('ASSIGN_PROJECTS'), handleRemoveAssignment);
 
 export default router;

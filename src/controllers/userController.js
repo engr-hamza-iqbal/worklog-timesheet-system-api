@@ -45,9 +45,25 @@ export async function handleUpdateUser(req, res, next) {
 export async function handleAssignProject(req, res, next) {
   try {
     const { id: projectId } = req.params;
-    const { userId } = req.body;
+    const { userId, userIds } = req.body;
+    if (Array.isArray(userIds) && userIds.length > 0) {
+      const assignments = await userService.assignUsersToProject(projectId, userIds);
+      return sendSuccess(res, assignments, 'Employees assigned to project successfully.', 201);
+    }
     const assignment = await userService.assignUserToProject(projectId, userId);
     return sendSuccess(res, assignment, 'Employee assigned to project successfully.', 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleAssignProjectsToUser(req, res, next) {
+  try {
+    const { id: userId } = req.params;
+    const { projectId, projectIds } = req.body;
+    const pIds = Array.isArray(projectIds) ? projectIds : [projectId];
+    const assignments = await userService.assignUserToProjects(userId, pIds);
+    return sendSuccess(res, assignments, 'Projects assigned to employee successfully.', 201);
   } catch (err) {
     next(err);
   }
@@ -69,5 +85,6 @@ export default {
   handleUpdateUser,
   handleUpdateUserStatus,
   handleAssignProject,
+  handleAssignProjectsToUser,
   handleRemoveAssignment,
 };
