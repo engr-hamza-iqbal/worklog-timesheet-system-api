@@ -133,11 +133,59 @@ export async function handleGetAuditLogs(req, res, next) {
   }
 }
 
+export async function handleUpdateCapabilityGrant(req, res, next) {
+  try {
+    const { grantId } = req.params;
+    const { expiresAt, scopeType, targetProjectIds, targetUserIds } = req.body;
+
+    const updated = await accessService.updateCapabilityGrant({
+      actorId: req.user.id,
+      grantId,
+      expiresAt,
+      scopeType,
+      targetProjectIds,
+      targetUserIds,
+    });
+
+    return sendSuccess(res, updated, 'Capability grant updated successfully.');
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleUpdateCapabilityGrants(req, res, next) {
+  try {
+    const { grantIds, expiresAt, scopeType, targetProjectIds, targetUserIds } = req.body;
+
+    if (!Array.isArray(grantIds) || grantIds.length === 0) {
+      const error = new Error('Please provide grantIds array.');
+      error.statusCode = 400;
+      error.code = 'INVALID_ARGUMENTS';
+      throw error;
+    }
+
+    const results = await accessService.updateCapabilityGrants({
+      actorId: req.user.id,
+      grantIds,
+      expiresAt,
+      scopeType,
+      targetProjectIds,
+      targetUserIds,
+    });
+
+    return sendSuccess(res, results, 'Capability grants updated successfully.');
+  } catch (err) {
+    next(err);
+  }
+}
+
 export default {
   handleGetCapabilities,
   handleGetUserGrants,
   handleGrantCapability,
   handleRevokeCapability,
   handleRevokeCapabilities,
+  handleUpdateCapabilityGrant,
+  handleUpdateCapabilityGrants,
   handleGetAuditLogs,
 };

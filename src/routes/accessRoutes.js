@@ -5,6 +5,8 @@ import {
   handleGrantCapability,
   handleRevokeCapability,
   handleRevokeCapabilities,
+  handleUpdateCapabilityGrant,
+  handleUpdateCapabilityGrants,
   handleGetAuditLogs,
 } from '../controllers/accessController.js';
 import { authenticate } from '../middleware/auth.js';
@@ -22,6 +24,10 @@ router.use(requireAdmin());
 
 router.get('/users/:userId/grants', handleGetUserGrants);
 router.post('/grants', handleGrantCapability);
+router.patch('/grants/bulk-update', handleUpdateCapabilityGrants);
+router.post('/grants/bulk-update', handleUpdateCapabilityGrants);
+router.patch('/grants/:grantId', handleUpdateCapabilityGrant);
+router.put('/grants/:grantId', handleUpdateCapabilityGrant);
 router.post('/grants/revoke', handleRevokeCapabilities);
 router.post('/grants/:grantId/revoke', handleRevokeCapability);
 router.get('/audit-logs', handleGetAuditLogs);

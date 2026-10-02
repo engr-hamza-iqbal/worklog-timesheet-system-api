@@ -453,6 +453,205 @@ export async function revokeCapabilityFromUsers({ actorId, capabilityCode, userI
 }
 
 /**
+ * Update an existing capability grant (extend/modify expiry, update scopes)
+ */
+export async function updateCapabilityGrant({
+  actorId,
+  grantId,
+  expiresAt,
+  scopeType,
+  targetProjectIds,
+  targetUserIds,
+}) {
+  const grant = await prisma.capabilityGrant.findUnique({
+    where: { id: grantId },
+    include: {
+      capability: true,
+      scopes: true,
+    },
+  });
+
+  if (!grant) {
+    const error = new Error('Capability grant not found.');
+    error.statusCode = 404;
+    error.code = 'GRANT_NOT_FOUND';
+    throw error;
+  }
+
+  if (grant.revokedAt) {
+    const error = new Error('Cannot edit a revoked capability grant.');
+    error.statusCode = 400;
+    error.code = 'GRANT_REVOKED';
+    throw error;
+  }
+
+  if (actorId === grant.userId) {
+    const error = new Error('You cannot modify capabilities on your own account.');
+    error.statusCode = 403;
+    error.code = 'SELF_GRANT_FORBIDDEN';
+    throw error;
+  }
+
+  // Determine if expiry is being modified
+  const isExpiryProvided = expiresAt !== undefined;
+  const newExpiresAt = isExpiryProvided
+    ? (expiresAt ? new Date(expiresAt) : null)
+    : grant.expiresAt;
+  const oldExpiryTime = grant.expiresAt ? new Date(grant.expiresAt).getTime() : null;
+  const newExpiryTime = newExpiresAt ? newExpiresAt.getTime() : null;
+  const expiryChanged = isExpiryProvided && oldExpiryTime !== newExpiryTime;
+
+  // Determine if scope is being modified
+  const isScopeProvided = scopeType !== undefined;
+  let scopeChanged = false;
+  if (isScopeProvided) {
+    if (scopeType === 'GLOBAL') {
+      scopeChanged = grant.scopes.length > 0;
+    } else if (scopeType === 'PROJECT') {
+      const oldProjectIds = grant.scopes
+        .filter((s) => s.scopeType === 'PROJECT')
+        .map((s) => s.targetProjectId)
+        .sort();
+      const newProjectIds = [...(targetProjectIds || [])].sort();
+      scopeChanged =
+        grant.scopes.some((s) => s.scopeType !== 'PROJECT') ||
+        oldProjectIds.length !== newProjectIds.length ||
+        oldProjectIds.some((id, idx) => id !== newProjectIds[idx]);
+    } else if (scopeType === 'USER') {
+      const oldUserIds = grant.scopes
+        .filter((s) => s.scopeType === 'USER')
+        .map((s) => s.targetUserId)
+        .sort();
+      const newUserIds = [...(targetUserIds || [])].sort();
+      scopeChanged =
+        grant.scopes.some((s) => s.scopeType !== 'USER') ||
+        oldUserIds.length !== newUserIds.length ||
+        oldUserIds.some((id, idx) => id !== newUserIds[idx]);
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Update expiry if changed
+    if (expiryChanged) {
+      await tx.capabilityGrant.update({
+        where: { id: grantId },
+        data: { expiresAt: newExpiresAt },
+      });
+
+      await tx.accessAuditLog.create({
+        data: {
+          action: 'CHANGE_EXPIRY',
+          actorId,
+          targetUserId: grant.userId,
+          capabilityCode: grant.capability.code,
+          grantId: grant.id,
+          details: {
+            previousExpiresAt: grant.expiresAt,
+            newExpiresAt,
+          },
+        },
+      });
+    }
+
+    // 2. Update scopes if changed
+    if (scopeChanged) {
+      await tx.capabilityGrantScope.deleteMany({
+        where: { grantId },
+      });
+
+      if (scopeType === 'PROJECT' && Array.isArray(targetProjectIds) && targetProjectIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetProjectIds.map((projectId) => ({
+            grantId,
+            scopeType: 'PROJECT',
+            targetProjectId: projectId,
+          })),
+        });
+      } else if (scopeType === 'USER' && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
+        await tx.capabilityGrantScope.createMany({
+          data: targetUserIds.map((uid) => ({
+            grantId,
+            scopeType: 'USER',
+            targetUserId: uid,
+          })),
+        });
+      }
+
+      await tx.accessAuditLog.create({
+        data: {
+          action: 'CHANGE_SCOPE',
+          actorId,
+          targetUserId: grant.userId,
+          capabilityCode: grant.capability.code,
+          grantId: grant.id,
+          details: {
+            newScopeType: scopeType,
+            targetProjectIds: scopeType === 'PROJECT' ? targetProjectIds : [],
+            targetUserIds: scopeType === 'USER' ? targetUserIds : [],
+          },
+        },
+      });
+    }
+  });
+
+  bustUserCache(grant.userId);
+
+  return prisma.capabilityGrant.findUnique({
+    where: { id: grantId },
+    include: {
+      capability: true,
+      grantedBy: { select: { id: true, name: true, email: true } },
+      scopes: {
+        include: {
+          targetUser: { select: { id: true, name: true, email: true } },
+          targetProject: {
+            select: {
+              id: true,
+              name: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Bulk update multiple capability grants
+ */
+export async function updateCapabilityGrants({
+  actorId,
+  grantIds,
+  expiresAt,
+  scopeType,
+  targetProjectIds,
+  targetUserIds,
+}) {
+  if (!Array.isArray(grantIds) || grantIds.length === 0) {
+    const error = new Error('No grant IDs provided for update.');
+    error.statusCode = 400;
+    error.code = 'INVALID_ARGUMENTS';
+    throw error;
+  }
+
+  const results = [];
+  for (const grantId of grantIds) {
+    const updated = await updateCapabilityGrant({
+      actorId,
+      grantId,
+      expiresAt,
+      scopeType,
+      targetProjectIds,
+      targetUserIds,
+    });
+    results.push(updated);
+  }
+
+  return results;
+}
+
+/**
  * View paginated access audit logs
  */
 export async function getAccessAuditLogs({ limit = 50, offset = 0 } = {}) {
@@ -683,5 +882,7 @@ export default {
   revokeCapability,
   revokeCapabilities,
   revokeCapabilityFromUsers,
+  updateCapabilityGrant,
+  updateCapabilityGrants,
   getAccessAuditLogs,
 };
