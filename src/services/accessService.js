@@ -121,6 +121,7 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
   const hasTarget = Boolean(
     scope.targetProjectId ||
     scope.targetUserId ||
+    scope.targetClientId ||
     (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0) ||
     (Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0)
   );
@@ -135,34 +136,86 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
     );
   }
 
-  const projectAllowed = scope.targetProjectId
-    && capability.allowedProjectIds.includes(scope.targetProjectId);
-  const projectsAllowed = Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0
-    && scope.targetProjectIds.every((pid) => capability.allowedProjectIds.includes(pid));
-  const userAllowed = scope.targetUserId
-    && capability.allowedUserIds.includes(scope.targetUserId);
-  const usersAllowed = Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0
-    && scope.targetUserIds.every((uid) => capability.allowedUserIds.includes(uid));
-
-  if (projectAllowed || projectsAllowed || userAllowed || usersAllowed) {
-    return true;
-  }
-
-  // If scoped to projects and checking a user, verify if targetUserId is assigned to any allowed project
-  if (scope.targetUserId && capability.allowedProjectIds.length > 0) {
-    const isAssigned = await prisma.projectAssignment.findFirst({
-      where: {
-        userId: scope.targetUserId,
-        projectId: { in: capability.allowedProjectIds },
-        removedAt: null,
-      },
-    });
-    if (isAssigned) {
-      return true;
+  // 1. Client constraint: if targetClientId is checked, client must have at least one allowed project
+  if (scope.targetClientId) {
+    if (capability.allowedProjectIds.length > 0) {
+      const clientHasProject = await prisma.project.findFirst({
+        where: {
+          clientId: scope.targetClientId,
+          id: { in: capability.allowedProjectIds },
+        },
+        select: { id: true },
+      });
+      if (!clientHasProject) {
+        return false;
+      }
+    } else if (capability.allowedUserIds.length > 0) {
+      // User-scoped capabilities do not grant client-level actions
+      return false;
     }
   }
 
-  return false;
+  // 2. User constraint: if capability is scoped to specific users, all targeted users must be in allowedUserIds
+  if (capability.allowedUserIds.length > 0) {
+    if (scope.targetUserId && !capability.allowedUserIds.includes(scope.targetUserId)) {
+      return false;
+    }
+    if (Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0) {
+      const allAllowed = scope.targetUserIds.every((uid) => capability.allowedUserIds.includes(uid));
+      if (!allAllowed) return false;
+    }
+    // If only scoped to users, but action targets a project without specifying an allowed target user, deny
+    if ((scope.targetProjectId || (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0)) &&
+        !scope.targetUserId && (!Array.isArray(scope.targetUserIds) || scope.targetUserIds.length === 0)) {
+      return false;
+    }
+  }
+
+  // 3. Project constraint: if capability is scoped to specific projects, all targeted projects must be in allowedProjectIds
+  if (capability.allowedProjectIds.length > 0) {
+    if (scope.targetProjectId && !capability.allowedProjectIds.includes(scope.targetProjectId)) {
+      return false;
+    }
+    if (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0) {
+      const allAllowed = scope.targetProjectIds.every((pid) => capability.allowedProjectIds.includes(pid));
+      if (!allAllowed) return false;
+    }
+
+    // If scoped to projects and checking target user(s) without a target project,
+    // verify the target user is assigned to at least one allowed project
+    if (capability.allowedUserIds.length === 0 && !scope.targetProjectId && (!scope.targetProjectIds || scope.targetProjectIds.length === 0)) {
+      if (scope.targetUserId) {
+        const isAssigned = await prisma.projectAssignment.findFirst({
+          where: {
+            userId: scope.targetUserId,
+            projectId: { in: capability.allowedProjectIds },
+            removedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!isAssigned) {
+          return false;
+        }
+      }
+      if (Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0) {
+        for (const uid of scope.targetUserIds) {
+          const isAssigned = await prisma.projectAssignment.findFirst({
+            where: {
+              userId: uid,
+              projectId: { in: capability.allowedProjectIds },
+              removedAt: null,
+            },
+            select: { id: true },
+          });
+          if (!isAssigned) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 /**

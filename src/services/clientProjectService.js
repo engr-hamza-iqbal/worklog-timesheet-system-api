@@ -1,16 +1,37 @@
 import prisma from '../config/db.js';
 import { getUserActiveCapabilities } from './accessService.js';
+import { bustUserCache } from '../middleware/auth.js';
 
 /**
  * List all clients with optional active status filtering
  */
-export async function getClients(activeOnly = false) {
+export async function getClients(activeOnly = false, actorUser = null) {
   const where = activeOnly ? { isActive: true } : {};
+
+  let allowedProjectIds = null;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
+    if (manageCap) {
+      if (!manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+        allowedProjectIds = manageCap.allowedProjectIds;
+        where.projects = { some: { id: { in: allowedProjectIds } } };
+      }
+    } else {
+      // General user without MANAGE_CLIENTS_PROJECTS: only see clients with projects they're assigned to
+      where.projects = { some: { assignments: { some: { userId: actorUser.id, removedAt: null } } } };
+    }
+  }
+
   return prisma.client.findMany({
     where,
     include: {
       _count: {
-        select: { projects: true },
+        select: {
+          projects: allowedProjectIds
+            ? { where: { id: { in: allowedProjectIds } } }
+            : true,
+        },
       },
     },
     orderBy: { name: 'asc' },
@@ -20,7 +41,17 @@ export async function getClients(activeOnly = false) {
 /**
  * Create a new client
  */
-export async function createClient({ name }) {
+export async function createClient({ name }, actorUser = null) {
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    if (!caps['MANAGE_CLIENTS_PROJECTS']?.isGlobal) {
+      const error = new Error('Creating new clients requires global client management permission.');
+      error.statusCode = 403;
+      error.code = 'GLOBAL_CAPABILITY_REQUIRED';
+      throw error;
+    }
+  }
+
   if (!name || !name.trim()) {
     const error = new Error('Client name is required.');
     error.statusCode = 400;
@@ -50,13 +81,38 @@ export async function createClient({ name }) {
 /**
  * Update an existing client (name, isActive)
  */
-export async function updateClient(id, { name, isActive }) {
+export async function updateClient(id, { name, isActive }, actorUser = null) {
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client) {
     const error = new Error('Client not found.');
     error.statusCode = 404;
     error.code = 'NOT_FOUND';
     throw error;
+  }
+
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
+    if (!manageCap) {
+      const error = new Error('Permission denied.');
+      error.statusCode = 403;
+      throw error;
+    }
+    if (!manageCap.isGlobal) {
+      const hasAllowedProject = await prisma.project.findFirst({
+        where: {
+          clientId: id,
+          id: { in: manageCap.allowedProjectIds || [] },
+        },
+        select: { id: true },
+      });
+      if (!hasAllowedProject) {
+        const error = new Error('You do not have permission to manage this client.');
+        error.statusCode = 403;
+        error.code = 'INSUFFICIENT_PERMISSIONS';
+        throw error;
+      }
+    }
   }
 
   const data = {};
@@ -78,18 +134,28 @@ export async function updateClient(id, { name, isActive }) {
  */
 export async function getProjects({ clientId, activeOnly = false, assignedUserId } = {}, actorUser = null) {
   let canViewBilling = true;
-  if (actorUser && actorUser.accountType !== 'ADMIN') {
-    const caps = await getUserActiveCapabilities(actorUser);
-    canViewBilling = Boolean(caps['VIEW_BILLING']);
-  }
-
   const where = {};
   if (clientId) where.clientId = clientId;
   if (activeOnly) {
     where.status = 'ACTIVE';
     where.client = { isActive: true };
   }
-  if (assignedUserId) {
+
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    canViewBilling = Boolean(caps['VIEW_BILLING']);
+
+    const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
+    if (assignedUserId) {
+      where.assignments = { some: { userId: assignedUserId, removedAt: null } };
+    } else if (manageCap) {
+      if (!manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+        where.id = { in: manageCap.allowedProjectIds };
+      }
+    } else {
+      where.assignments = { some: { userId: actorUser.id, removedAt: null } };
+    }
+  } else if (assignedUserId) {
     where.assignments = { some: { userId: assignedUserId, removedAt: null } };
   }
 
@@ -147,12 +213,47 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
 /**
  * Create a new project under a client with optional initial billing rate
  */
-export async function createProject({ clientId, name, initialRatePerHour }) {
+export async function createProject({ clientId, name, initialRatePerHour }, actorUser = null) {
   if (!clientId || !name || !name.trim()) {
     const error = new Error('Both Client and Project name are required.');
     error.statusCode = 400;
     error.code = 'VALIDATION_ERROR';
     throw error;
+  }
+
+  let actorGrantToExtend = null;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
+    if (!manageCap) {
+      const error = new Error('Permission denied.');
+      error.statusCode = 403;
+      throw error;
+    }
+    if (!manageCap.isGlobal) {
+      const hasAllowedProject = await prisma.project.findFirst({
+        where: {
+          clientId,
+          id: { in: manageCap.allowedProjectIds || [] },
+        },
+        select: { id: true },
+      });
+      if (!hasAllowedProject) {
+        const error = new Error('You do not have permission to create projects under this client.');
+        error.statusCode = 403;
+        error.code = 'INSUFFICIENT_PERMISSIONS';
+        throw error;
+      }
+
+      actorGrantToExtend = await prisma.capabilityGrant.findFirst({
+        where: {
+          userId: actorUser.id,
+          capability: { code: 'MANAGE_CLIENTS_PROJECTS' },
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+      });
+    }
   }
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
@@ -179,8 +280,8 @@ export async function createProject({ clientId, name, initialRatePerHour }) {
     throw error;
   }
 
-  return prisma.$transaction(async (tx) => {
-    const project = await tx.project.create({
+  const project = await prisma.$transaction(async (tx) => {
+    const newProj = await tx.project.create({
       data: {
         clientId,
         name: name.trim(),
@@ -199,15 +300,31 @@ export async function createProject({ clientId, name, initialRatePerHour }) {
 
       await tx.projectRate.create({
         data: {
-          projectId: project.id,
+          projectId: newProj.id,
           ratePerHour: rateNum,
           effectiveFrom: new Date(),
         },
       });
     }
 
-    return project;
+    if (actorGrantToExtend) {
+      await tx.capabilityGrantScope.create({
+        data: {
+          grantId: actorGrantToExtend.id,
+          scopeType: 'PROJECT',
+          targetProjectId: newProj.id,
+        },
+      });
+    }
+
+    return newProj;
   });
+
+  if (actorGrantToExtend) {
+    bustUserCache(actorUser.id);
+  }
+
+  return project;
 }
 
 /**

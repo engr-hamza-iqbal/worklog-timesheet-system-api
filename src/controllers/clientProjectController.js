@@ -4,7 +4,7 @@ import { sendSuccess } from '../utils/response.js';
 export async function handleGetClients(req, res, next) {
   try {
     const activeOnly = req.query.activeOnly === 'true';
-    const clients = await clientProjectService.getClients(activeOnly);
+    const clients = await clientProjectService.getClients(activeOnly, req.user);
     return sendSuccess(res, clients, 'Clients retrieved successfully.');
   } catch (err) {
     next(err);
@@ -14,7 +14,7 @@ export async function handleGetClients(req, res, next) {
 export async function handleCreateClient(req, res, next) {
   try {
     const { name } = req.body;
-    const client = await clientProjectService.createClient({ name });
+    const client = await clientProjectService.createClient({ name }, req.user);
     return sendSuccess(res, client, 'Client created successfully.', 201);
   } catch (err) {
     next(err);
@@ -25,7 +25,7 @@ export async function handleUpdateClient(req, res, next) {
   try {
     const { id } = req.params;
     const { name, isActive } = req.body;
-    const client = await clientProjectService.updateClient(id, { name, isActive });
+    const client = await clientProjectService.updateClient(id, { name, isActive }, req.user);
     return sendSuccess(res, client, 'Client updated successfully.');
   } catch (err) {
     next(err);
@@ -53,7 +53,7 @@ export async function handleCreateProject(req, res, next) {
       clientId,
       name,
       initialRatePerHour,
-    });
+    }, req.user);
     return sendSuccess(res, project, 'Project created successfully.', 201);
   } catch (err) {
     next(err);

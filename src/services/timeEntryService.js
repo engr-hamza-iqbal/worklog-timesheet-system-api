@@ -1,5 +1,5 @@
 import prisma from '../config/db.js';
-import { checkUserCapability } from './accessService.js';
+import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -366,16 +366,23 @@ export async function getTimeEntriesForPeriod(actorUser, targetUserId, startDate
   const isAdmin = actorUser.accountType === 'ADMIN';
 
   // Employees can only view their own entries (VIEW_OTHER_RECORDS is checked at controller level)
+  let projectFilter = {};
   if (!isAdmin && targetUserId !== actorUser.id) {
     const canView = await checkUserCapability(actorUser, 'VIEW_OTHER_RECORDS', { targetUserId });
     if (!canView) throw Object.assign(new Error('Access denied.'), { status: 403 });
+
+    const caps = await getUserActiveCapabilities(actorUser);
+    const viewCap = caps['VIEW_OTHER_RECORDS'];
+    if (viewCap && !viewCap.isGlobal && Array.isArray(viewCap.allowedProjectIds) && viewCap.allowedProjectIds.length > 0) {
+      projectFilter = { projectId: { in: viewCap.allowedProjectIds } };
+    }
   }
 
   const start = new Date(`${startDate}T00:00:00.000Z`);
   const end   = new Date(`${endDate}T23:59:59.999Z`);
 
   const entries = await prisma.timeEntry.findMany({
-    where: { userId: targetUserId, deletedAt: null, workDate: { gte: start, lte: end } },
+    where: { userId: targetUserId, deletedAt: null, workDate: { gte: start, lte: end }, ...projectFilter },
     include: {
       project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
       histories: {

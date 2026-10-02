@@ -18,8 +18,8 @@ router.use(authenticate);
 // User Management
 router.get('/users', handleGetUsers);
 router.post('/users', requireCapability('MANAGE_USERS'), handleCreateUser);
-router.put('/users/:id', requireCapability('MANAGE_USERS'), handleUpdateUser);
-router.patch('/users/:id/status', requireCapability('MANAGE_USERS'), handleUpdateUserStatus);
+router.put('/users/:id', requireCapability('MANAGE_USERS', (req) => ({ targetUserId: req.params.id })), handleUpdateUser);
+router.patch('/users/:id/status', requireCapability('MANAGE_USERS', (req) => ({ targetUserId: req.params.id })), handleUpdateUserStatus);
 
 // Project Assignments
 router.post(

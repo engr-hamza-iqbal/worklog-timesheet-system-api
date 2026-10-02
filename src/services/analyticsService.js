@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import { Prisma } from '@prisma/client';
+import { getUserActiveCapabilities } from './accessService.js';
 
 function date(value, fallback) {
   const parsed = new Date(value || fallback);
@@ -7,15 +8,26 @@ function date(value, fallback) {
   return parsed.toISOString().slice(0, 10);
 }
 
-export async function getAnalytics({ startDate, endDate, projectId, clientId } = {}) {
+export async function getAnalytics({ startDate, endDate, projectId, clientId } = {}, actorUser = null) {
   const start = date(startDate, '2000-01-01');
   const end = date(endDate, new Date().toISOString().slice(0, 10));
   if (end < start) throw Object.assign(new Error('End date cannot be earlier than start date.'), { status: 400 });
+
+  let scopedProjectClause = Prisma.empty;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    const analyticsCap = caps['VIEW_ANALYTICS'];
+    if (analyticsCap && !analyticsCap.isGlobal && Array.isArray(analyticsCap.allowedProjectIds) && analyticsCap.allowedProjectIds.length > 0) {
+      scopedProjectClause = Prisma.sql`AND te."projectId" IN (${Prisma.join(analyticsCap.allowedProjectIds)})`;
+    }
+  }
+
   const filters = Prisma.sql`
     te."status" = 'APPROVED' AND te."deletedAt" IS NULL
     AND te."workDate" BETWEEN ${start}::date AND ${end}::date
     AND (${projectId || null}::text IS NULL OR te."projectId" = ${projectId || null})
     AND (${clientId || null}::text IS NULL OR p."clientId" = ${clientId || null})
+    ${scopedProjectClause}
   `;
   const [weekly, projects, clients, employees] = await Promise.all([
     prisma.$queryRaw(Prisma.sql`
