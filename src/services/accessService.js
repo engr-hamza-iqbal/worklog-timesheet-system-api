@@ -124,7 +124,16 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
     (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0) ||
     (Array.isArray(scope.targetUserIds) && scope.targetUserIds.length > 0)
   );
-  if (!hasTarget) return false;
+
+  // If no target project or user was specified in scope (e.g. general route check like GET /api/reports),
+  // holding this capability (whether global or scoped to any project/user) grants general access.
+  if (!hasTarget) {
+    return Boolean(
+      capability.isGlobal ||
+      (Array.isArray(capability.allowedProjectIds) && capability.allowedProjectIds.length > 0) ||
+      (Array.isArray(capability.allowedUserIds) && capability.allowedUserIds.length > 0)
+    );
+  }
 
   const projectAllowed = scope.targetProjectId
     && capability.allowedProjectIds.includes(scope.targetProjectId);

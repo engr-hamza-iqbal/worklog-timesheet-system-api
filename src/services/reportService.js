@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import { Prisma } from '@prisma/client';
+import { getUserActiveCapabilities } from './accessService.js';
 
 function date(value, fallback) {
   const parsed = new Date(value || fallback);
@@ -14,10 +15,20 @@ function range(filters = {}) {
   return { startDate, endDate };
 }
 
-export async function getReports(filters = {}) {
+export async function getReports(filters = {}, actorUser = null) {
   const { startDate, endDate } = range(filters);
   const projectId = filters.projectId || null;
   const clientId = filters.clientId || null;
+
+  let scopedProjectClause = Prisma.empty;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    const repCap = caps['VIEW_REPORTS'];
+    if (repCap && !repCap.isGlobal && Array.isArray(repCap.allowedProjectIds) && repCap.allowedProjectIds.length > 0) {
+      scopedProjectClause = Prisma.sql`AND te."projectId" IN (${Prisma.join(repCap.allowedProjectIds)})`;
+    }
+  }
+
   const approvedWhere = Prisma.sql`
     te."status" = 'APPROVED'
     AND te."deletedAt" IS NULL
@@ -25,6 +36,7 @@ export async function getReports(filters = {}) {
     AND te."workDate" <= ${endDate}::date
     AND (${projectId}::text IS NULL OR te."projectId" = ${projectId})
     AND (${clientId}::text IS NULL OR p."clientId" = ${clientId})
+    ${scopedProjectClause}
   `;
 
   const [byProject, byClient, byEmployee, byStatus] = await Promise.all([
