@@ -84,7 +84,33 @@ export async function updateTimeOffType(id, { name, description, isActive }) {
   });
 }
 
+export async function autoExpirePendingRequests() {
+  const today = dateOnly(new Date());
+  const expiredRequests = await prisma.timeOffRequest.findMany({
+    where: {
+      status: 'PENDING',
+      startDate: { lt: today },
+    },
+    select: { id: true },
+  });
+  if (expiredRequests.length > 0) {
+    const ids = expiredRequests.map((r) => r.id);
+    await prisma.$transaction([
+      prisma.timeOffDay.updateMany({
+        where: { timeOffRequestId: { in: ids }, status: 'PENDING' },
+        data: { status: 'EXPIRED' },
+      }),
+      prisma.timeOffRequest.updateMany({
+        where: { id: { in: ids } },
+        data: { status: 'EXPIRED' },
+      }),
+    ]);
+  }
+}
+
 export async function getTimeOffRequests(actorUser, { userId, status, startDate, endDate } = {}) {
+  await autoExpirePendingRequests();
+
   let targetUserId = userId || (actorUser.accountType === 'ADMIN' ? null : actorUser.id);
   let allowedUserIds = null;
   if (!userId && actorUser.accountType !== 'ADMIN') {
@@ -138,6 +164,8 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
   if (!reason?.trim() || reason.trim().length < 5) fail('Reason must be at least 5 characters.');
   const start = dateOnly(startDate);
   const end = dateOnly(endDate);
+  const today = dateOnly(new Date());
+  if (start < today) fail('Cannot request time off for a start date that has already passed.', 400);
   if (end < start) fail('End date cannot be earlier than start date.');
 
   const type = await prisma.timeOffType.findFirst({ where: { id: timeOffTypeId, isActive: true } });
@@ -224,6 +252,17 @@ export async function cancelTimeOffRequest(actorUser, requestId) {
   });
   if (!request) fail('Time-off request not found.', 404);
   if (request.userId !== actorUser.id) fail('You can only cancel your own request.', 403);
+  
+  const today = dateOnly(new Date());
+  if (request.status === 'EXPIRED' || (request.status === 'PENDING' && dateOnly(request.startDate) < today)) {
+    if (request.status === 'PENDING') {
+      await prisma.$transaction([
+        prisma.timeOffRequest.update({ where: { id: requestId }, data: { status: 'EXPIRED' } }),
+        prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId, status: 'PENDING' }, data: { status: 'EXPIRED' } }),
+      ]);
+    }
+    fail('Cannot cancel an expired time-off request.', 400);
+  }
   if (request.status !== 'PENDING') fail('Only pending requests can be cancelled.');
 
   await prisma.$transaction([
@@ -252,6 +291,17 @@ export async function decideTimeOffRequest(actorUser, requestId, decision, comme
     },
   });
   if (!request) fail('Time-off request not found.', 404);
+  
+  const today = dateOnly(new Date());
+  if (request.status === 'EXPIRED' || (request.status === 'PENDING' && dateOnly(request.startDate) < today)) {
+    if (request.status === 'PENDING') {
+      await prisma.$transaction([
+        prisma.timeOffRequest.update({ where: { id: requestId }, data: { status: 'EXPIRED' } }),
+        prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId, status: 'PENDING' }, data: { status: 'EXPIRED' } }),
+      ]);
+    }
+    fail('This time-off request has expired because its start date has already passed.', 400);
+  }
   if (request.status !== 'PENDING') fail('Only pending requests can be decided.');
   await assertCanDecide(actorUser, request);
 
