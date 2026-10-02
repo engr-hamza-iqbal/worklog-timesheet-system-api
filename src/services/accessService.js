@@ -707,34 +707,47 @@ export async function grantCapabilitiesToUser({
     throw error;
   }
 
-  const results = [];
   const uniqueCodes = [...new Set(capabilityCodes)];
+  if (uniqueCodes.length === 0) return [];
 
-  for (const code of uniqueCodes) {
-    const capability = await prisma.capability.findUnique({ where: { code } });
-    if (!capability) continue;
+  const capabilities = await prisma.capability.findMany({
+    where: { code: { in: uniqueCodes } },
+  });
+  if (capabilities.length === 0) return [];
 
-    const existingActive = await prisma.capabilityGrant.findFirst({
-      where: {
-        userId: targetUserId,
-        capabilityId: capability.id,
-        revokedAt: null,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } },
-        ],
-      },
-    });
+  const now = new Date();
+  const existingActiveGrants = await prisma.capabilityGrant.findMany({
+    where: {
+      userId: targetUserId,
+      capabilityId: { in: capabilities.map((c) => c.id) },
+      revokedAt: null,
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: now } },
+      ],
+    },
+    select: { capabilityId: true },
+  });
 
-    if (existingActive) continue;
+  const activeCapIdSet = new Set(existingActiveGrants.map((g) => g.capabilityId));
+  const capsToGrant = capabilities.filter((c) => !activeCapIdSet.has(c.id));
 
-    const grant = await prisma.$transaction(async (tx) => {
+  if (capsToGrant.length === 0) {
+    return [];
+  }
+
+  const expiryDate = expiresAt ? new Date(expiresAt) : null;
+
+  const results = await prisma.$transaction(async (tx) => {
+    const createdGrants = [];
+
+    for (const capability of capsToGrant) {
       const g = await tx.capabilityGrant.create({
         data: {
           userId: targetUserId,
           capabilityId: capability.id,
           grantedById: actorId,
-          expiresAt: expiresAt ? new Date(expiresAt) : null,
+          expiresAt: expiryDate,
         },
       });
 
@@ -761,7 +774,7 @@ export async function grantCapabilitiesToUser({
           action: 'GRANT',
           actorId,
           targetUserId,
-          capabilityCode: code,
+          capabilityCode: capability.code,
           grantId: g.id,
           details: {
             scopeType: scopeType || 'GLOBAL',
@@ -772,11 +785,11 @@ export async function grantCapabilitiesToUser({
         },
       });
 
-      return g;
-    });
+      createdGrants.push(g);
+    }
 
-    results.push(grant);
-  }
+    return createdGrants;
+  });
 
   bustUserCache(targetUserId);
   return results;
@@ -802,36 +815,46 @@ export async function grantCapabilityToUsers({
     throw error;
   }
 
-  const results = [];
-  const uniqueUserIds = [...new Set(targetUserIds)];
+  const uniqueUserIds = [...new Set(targetUserIds)].filter((uid) => uid !== actorId);
+  if (uniqueUserIds.length === 0) return [];
 
-  for (const uid of uniqueUserIds) {
-    if (uid === actorId) continue; // cannot grant to self
+  const eligibleUsers = await prisma.user.findMany({
+    where: { id: { in: uniqueUserIds }, isActive: true },
+    select: { id: true },
+  });
+  if (eligibleUsers.length === 0) return [];
 
-    const user = await prisma.user.findUnique({ where: { id: uid } });
-    if (!user || !user.isActive) continue;
+  const eligibleUserIds = eligibleUsers.map((u) => u.id);
+  const now = new Date();
+  const existingActive = await prisma.capabilityGrant.findMany({
+    where: {
+      userId: { in: eligibleUserIds },
+      capabilityId: capability.id,
+      revokedAt: null,
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: now } },
+      ],
+    },
+    select: { userId: true },
+  });
 
-    const existingActive = await prisma.capabilityGrant.findFirst({
-      where: {
-        userId: uid,
-        capabilityId: capability.id,
-        revokedAt: null,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } },
-        ],
-      },
-    });
+  const alreadyGrantedUserIdSet = new Set(existingActive.map((g) => g.userId));
+  const userIdsToGrant = eligibleUserIds.filter((uid) => !alreadyGrantedUserIdSet.has(uid));
+  if (userIdsToGrant.length === 0) return [];
 
-    if (existingActive) continue;
+  const expiryDate = expiresAt ? new Date(expiresAt) : null;
 
-    const grant = await prisma.$transaction(async (tx) => {
+  const results = await prisma.$transaction(async (tx) => {
+    const createdGrants = [];
+
+    for (const uid of userIdsToGrant) {
       const g = await tx.capabilityGrant.create({
         data: {
           userId: uid,
           capabilityId: capability.id,
           grantedById: actorId,
-          expiresAt: expiresAt ? new Date(expiresAt) : null,
+          expiresAt: expiryDate,
         },
       });
 
@@ -869,10 +892,13 @@ export async function grantCapabilityToUsers({
         },
       });
 
-      return g;
-    });
+      createdGrants.push(g);
+    }
 
-    results.push(grant);
+    return createdGrants;
+  });
+
+  for (const uid of userIdsToGrant) {
     bustUserCache(uid);
   }
 
