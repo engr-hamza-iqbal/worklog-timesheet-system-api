@@ -12,14 +12,9 @@ export async function getClients(activeOnly = false, actorUser = null) {
   if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
     const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
-    if (manageCap) {
-      if (!manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
-        allowedProjectIds = manageCap.allowedProjectIds;
-        where.projects = { some: { id: { in: allowedProjectIds } } };
-      }
-    } else {
-      // General user without MANAGE_CLIENTS_PROJECTS: only see clients with projects they're assigned to
-      where.projects = { some: { assignments: { some: { userId: actorUser.id, removedAt: null } } } };
+    if (manageCap && !manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+      allowedProjectIds = manageCap.allowedProjectIds;
+      where.projects = { some: { id: { in: allowedProjectIds } } };
     }
   }
 
@@ -148,12 +143,8 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
     if (assignedUserId) {
       where.assignments = { some: { userId: assignedUserId, removedAt: null } };
-    } else if (manageCap) {
-      if (!manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
-        where.id = { in: manageCap.allowedProjectIds };
-      }
-    } else {
-      where.assignments = { some: { userId: actorUser.id, removedAt: null } };
+    } else if (manageCap && !manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+      where.id = { in: manageCap.allowedProjectIds };
     }
   } else if (assignedUserId) {
     where.assignments = { some: { userId: assignedUserId, removedAt: null } };
