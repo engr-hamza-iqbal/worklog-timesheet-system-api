@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
 import { JWT_SECRET } from '../config/env.js';
 import { sendError } from '../utils/response.js';
+import { notifyUserAccessChanged } from '../utils/eventStream.js';
 
 // ── User cache ────────────────────────────────────────────────────────────────
 // Short-lived (30 s) in-memory cache keyed by userId.
@@ -28,6 +29,7 @@ function setCachedUser(userId, user) {
 // Allow other code (e.g. deactivation endpoint) to immediately bust a user's cache entry.
 export function bustUserCache(userId) {
   USER_CACHE.delete(userId);
+  notifyUserAccessChanged(userId, { type: 'CAPABILITIES_CHANGED', userId });
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────────────

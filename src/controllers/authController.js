@@ -1,5 +1,8 @@
+import jwt from 'jsonwebtoken';
 import authService from '../services/authService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+import { JWT_SECRET } from '../config/env.js';
+import { registerClient } from '../utils/eventStream.js';
 
 export async function handleRegister(req, res, next) {
   try {
@@ -38,9 +41,50 @@ export async function handleLogout(req, res, next) {
   }
 }
 
+export function handleEventStream(req, res) {
+  const token = req.query.token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token required for event stream.' });
+  }
+
+  let userId;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    userId = decoded.userId;
+  } catch {
+    return res.status(401).json({ error: 'Invalid token for event stream.' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  res.write(`data: ${JSON.stringify({ type: 'CONNECTED', userId })}\n\n`);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 25000);
+
+  registerClient(userId, res);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+  });
+}
+
 export default {
   handleRegister,
   handleLogin,
   handleGetMe,
   handleLogout,
+  handleEventStream,
 };
