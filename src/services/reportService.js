@@ -21,12 +21,14 @@ export async function getReports(filters = {}, actorUser = null) {
   const clientId = filters.clientId || null;
 
   let scopedProjectClause = Prisma.empty;
+  let canViewBilling = true;
   if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
     const repCap = caps['VIEW_REPORTS'];
     if (repCap && !repCap.isGlobal && Array.isArray(repCap.allowedProjectIds) && repCap.allowedProjectIds.length > 0) {
       scopedProjectClause = Prisma.sql`AND te."projectId" IN (${Prisma.join(repCap.allowedProjectIds)})`;
     }
+    canViewBilling = Boolean(caps['VIEW_BILLING']);
   }
 
   const approvedWhere = Prisma.sql`
@@ -90,7 +92,15 @@ export async function getReports(filters = {}, actorUser = null) {
     `),
   ]);
 
-  return { startDate, endDate, byProject, byClient, byEmployee, byStatus };
+  const sanitizedByProject = canViewBilling
+    ? byProject
+    : byProject.map(({ billableValue, ...rest }) => rest);
+
+  const sanitizedByClient = canViewBilling
+    ? byClient
+    : byClient.map(({ billableValue, ...rest }) => rest);
+
+  return { startDate, endDate, byProject: sanitizedByProject, byClient: sanitizedByClient, byEmployee, byStatus };
 }
 
 export async function getMissingTimesheets(targetDate) {

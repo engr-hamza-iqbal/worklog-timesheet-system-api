@@ -1,4 +1,5 @@
 import prisma from '../config/db.js';
+import { getUserActiveCapabilities } from './accessService.js';
 
 /**
  * List all clients with optional active status filtering
@@ -75,7 +76,13 @@ export async function updateClient(id, { name, isActive }) {
 /**
  * List projects, optionally filtered by clientId or activeOnly
  */
-export async function getProjects({ clientId, activeOnly = false, assignedUserId } = {}) {
+export async function getProjects({ clientId, activeOnly = false, assignedUserId } = {}, actorUser = null) {
+  let canViewBilling = true;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    canViewBilling = Boolean(caps['VIEW_BILLING']);
+  }
+
   const where = {};
   if (clientId) where.clientId = clientId;
   if (activeOnly) {
@@ -129,7 +136,7 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     clientId: p.clientId,
     clientName: p.client.name,
     status: p.status,
-    currentRate: p.rates?.[0] ? Number(p.rates[0].ratePerHour) : null,
+    currentRate: canViewBilling && p.rates?.[0] ? Number(p.rates[0].ratePerHour) : null,
     assignedEmployees: p.assignments?.map((a) => a.user) || [],
     totalTimeEntries: p._count?.timeEntries || 0,
     createdAt: p.createdAt,

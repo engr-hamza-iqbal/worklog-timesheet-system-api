@@ -39,7 +39,7 @@ export async function handleGetProjects(req, res, next) {
       clientId,
       activeOnly: activeOnly === 'true',
       assignedUserId: assignedToMe === 'true' ? req.user.id : undefined,
-    });
+    }, req.user);
     return sendSuccess(res, projects, 'Projects retrieved successfully.');
   } catch (err) {
     next(err);
