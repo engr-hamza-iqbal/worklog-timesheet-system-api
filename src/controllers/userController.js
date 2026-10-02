@@ -47,10 +47,10 @@ export async function handleAssignProject(req, res, next) {
     const { id: projectId } = req.params;
     const { userId, userIds } = req.body;
     if (Array.isArray(userIds) && userIds.length > 0) {
-      const assignments = await userService.assignUsersToProject(projectId, userIds);
+      const assignments = await userService.assignUsersToProject(projectId, userIds, req.user);
       return sendSuccess(res, assignments, 'Employees assigned to project successfully.', 201);
     }
-    const assignment = await userService.assignUserToProject(projectId, userId);
+    const assignment = await userService.assignUserToProject(projectId, userId, req.user);
     return sendSuccess(res, assignment, 'Employee assigned to project successfully.', 201);
   } catch (err) {
     next(err);
@@ -62,7 +62,7 @@ export async function handleAssignProjectsToUser(req, res, next) {
     const { id: userId } = req.params;
     const { projectId, projectIds } = req.body;
     const pIds = Array.isArray(projectIds) ? projectIds : [projectId];
-    const assignments = await userService.assignUserToProjects(userId, pIds);
+    const assignments = await userService.assignUserToProjects(userId, pIds, req.user);
     return sendSuccess(res, assignments, 'Projects assigned to employee successfully.', 201);
   } catch (err) {
     next(err);
@@ -72,7 +72,7 @@ export async function handleAssignProjectsToUser(req, res, next) {
 export async function handleRemoveAssignment(req, res, next) {
   try {
     const { id: projectId, userId } = req.params;
-    const result = await userService.removeUserFromProject(projectId, userId);
+    const result = await userService.removeUserFromProject(projectId, userId, req.user);
     return sendSuccess(res, result, 'Employee assignment removed successfully.');
   } catch (err) {
     next(err);

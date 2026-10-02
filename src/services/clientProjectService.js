@@ -141,10 +141,28 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     canViewBilling = Boolean(caps['VIEW_BILLING']);
 
     const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
+    const assignCap = caps['ASSIGN_PROJECTS'];
+    const manageUsersCap = caps['MANAGE_USERS'];
+
     if (assignedUserId) {
       where.assignments = { some: { userId: assignedUserId, removedAt: null } };
-    } else if (manageCap && !manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
-      where.id = { in: manageCap.allowedProjectIds };
+    } else {
+      const isGlobal = (manageCap && manageCap.isGlobal) || (assignCap && assignCap.isGlobal);
+      if (!isGlobal) {
+        const allowedIds = new Set();
+        if (manageCap && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+          manageCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+        }
+        if (assignCap && Array.isArray(assignCap.allowedProjectIds) && assignCap.allowedProjectIds.length > 0) {
+          assignCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+        }
+        if (allowedIds.size === 0 && manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
+          manageUsersCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+        }
+        if (allowedIds.size > 0) {
+          where.id = { in: Array.from(allowedIds) };
+        }
+      }
     }
   } else if (assignedUserId) {
     where.assignments = { some: { userId: assignedUserId, removedAt: null } };

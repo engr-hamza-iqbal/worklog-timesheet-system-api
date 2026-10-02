@@ -35,7 +35,7 @@ async function runTests() {
     const typeId = types.body.data[0].id;
 
     const created = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate, endDate, reason: 'Family appointment' } });
-    assert(created.status === 201 && created.body.data.days.length === 2, 'Valid time-off request failed to materialize its days.');
+    assert(created.status === 201 && created.body?.data?.days?.length === 2, `Valid time-off request failed to materialize its days: ${created.status} ${JSON.stringify(created.body)}`);
     const requestId = created.body.data.id;
 
     const reversed = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate: endDate, endDate: startDate, reason: 'Invalid range' } });

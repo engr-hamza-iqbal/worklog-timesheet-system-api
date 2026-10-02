@@ -142,9 +142,9 @@ export async function updateUserStatus(userId, { isActive }, currentAdminId) {
     throw error;
   }
 
-  // Business Rule: An admin cannot deactivate themselves
+  // Business Rule: A user or administrator cannot deactivate themselves
   if (!isActive && userId === currentAdminId) {
-    const error = new Error('You cannot deactivate your own administrator account.');
+    const error = new Error('You cannot deactivate your own account.');
     error.statusCode = 403;
     error.code = 'SELF_DEACTIVATION_FORBIDDEN';
     throw error;
@@ -222,11 +222,11 @@ export async function updateUser(userId, { name, email, accountType }, actorUser
       throw error;
     }
 
-    // Business Rule: An admin cannot remove their own administrator access
-    if (actorUser && actorUser.id === userId && accountType !== 'ADMIN') {
-      const error = new Error('You cannot remove administrator access from your own account.');
+    // Business Rule: A user cannot modify their own account type / role
+    if (actorUser && actorUser.id === userId && accountType !== user.accountType) {
+      const error = new Error('You cannot modify the account type or role of your own account.');
       error.statusCode = 403;
-      error.code = 'SELF_DEMOTION_FORBIDDEN';
+      error.code = 'SELF_ROLE_CHANGE_FORBIDDEN';
       throw error;
     }
 
@@ -266,7 +266,14 @@ export async function updateUser(userId, { name, email, accountType }, actorUser
 /**
  * Assign employee to a project
  */
-export async function assignUserToProject(projectId, userId) {
+export async function assignUserToProject(projectId, userId, actorUser = null) {
+  // Business Rule: Nobody may assign themselves to projects
+  if (actorUser && actorUser.id === userId) {
+    const error = new Error('You cannot assign yourself to projects. Another administrator or project assigner must assign projects to you.');
+    error.statusCode = 403;
+    error.code = 'SELF_PROJECT_ASSIGNMENT_FORBIDDEN';
+    throw error;
+  }
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     const error = new Error('Project not found.');
@@ -340,7 +347,7 @@ export async function assignUserToProject(projectId, userId) {
 /**
  * Assign multiple employees to a project
  */
-export async function assignUsersToProject(projectId, userIds) {
+export async function assignUsersToProject(projectId, userIds, actorUser = null) {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     const error = new Error('Project not found.');
@@ -356,7 +363,14 @@ export async function assignUsersToProject(projectId, userIds) {
     throw error;
   }
 
-  const uniqueUserIds = [...new Set(userIds)];
+  // Filter out self-assignment attempts
+  const uniqueUserIds = [...new Set(userIds)].filter((uid) => !actorUser || uid !== actorUser.id);
+  if (uniqueUserIds.length === 0) {
+    const error = new Error('You cannot assign yourself to projects. Another administrator or project assigner must assign projects to you.');
+    error.statusCode = 403;
+    error.code = 'SELF_PROJECT_ASSIGNMENT_FORBIDDEN';
+    throw error;
+  }
   const created = [];
   for (const uid of uniqueUserIds) {
     const user = await prisma.user.findUnique({ where: { id: uid } });
@@ -396,7 +410,14 @@ export async function assignUsersToProject(projectId, userIds) {
 /**
  * Assign an employee to multiple projects
  */
-export async function assignUserToProjects(userId, projectIds) {
+export async function assignUserToProjects(userId, projectIds, actorUser = null) {
+  // Business Rule: Nobody may assign themselves to projects
+  if (actorUser && actorUser.id === userId) {
+    const error = new Error('You cannot assign yourself to projects. Another administrator or project assigner must assign projects to you.');
+    error.statusCode = 403;
+    error.code = 'SELF_PROJECT_ASSIGNMENT_FORBIDDEN';
+    throw error;
+  }
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     const error = new Error('User not found.');
@@ -459,7 +480,7 @@ export async function assignUserToProjects(userId, projectIds) {
 /**
  * Soft-remove employee from project (retaining historical work records)
  */
-export async function removeUserFromProject(projectId, userId) {
+export async function removeUserFromProject(projectId, userId, actorUser = null) {
   const activeAssignment = await prisma.projectAssignment.findFirst({
     where: {
       projectId,
@@ -473,6 +494,49 @@ export async function removeUserFromProject(projectId, userId) {
     error.statusCode = 404;
     error.code = 'ASSIGNMENT_NOT_FOUND';
     throw error;
+  }
+
+  // Business Rule: Nobody may remove themselves from project assignments
+  if (actorUser && actorUser.id === userId) {
+    const error = new Error('You cannot remove yourself from project assignments. Another administrator or project assigner must remove your project assignment.');
+    error.statusCode = 403;
+    error.code = 'SELF_PROJECT_REMOVAL_FORBIDDEN';
+    throw error;
+  }
+
+  // Business Rule: Forbid removing project assignment if active capabilities are held for this project
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const activeGrantWithProjectScope = await prisma.capabilityGrantScope.findFirst({
+      where: {
+        targetProjectId: projectId,
+        scopeType: 'PROJECT',
+        grant: {
+          userId,
+          revokedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } },
+          ],
+        },
+      },
+      include: {
+        grant: {
+          include: { capability: true },
+        },
+      },
+    });
+
+    if (activeGrantWithProjectScope) {
+      const capCode = activeGrantWithProjectScope.grant?.capability?.code || 'capabilities';
+      const isSelf = actorUser.id === userId;
+      const message = isSelf
+        ? `You cannot remove your own project assignment while you hold active capability "${capCode}" scoped to this project.`
+        : `Cannot remove project assignment for a user who holds active capability "${capCode}" on this project.`;
+      const error = new Error(message);
+      error.statusCode = 403;
+      error.code = isSelf ? 'SELF_PROJECT_REMOVAL_FORBIDDEN' : 'CAPABILITY_HELD_PROJECT_REMOVAL_FORBIDDEN';
+      throw error;
+    }
   }
 
   return prisma.projectAssignment.update({

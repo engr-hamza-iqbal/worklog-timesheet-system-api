@@ -213,6 +213,28 @@ export async function checkUserCapability(user, capabilityCode, scope = {}) {
         }
       }
     }
+  } else if (!capability.isGlobal && (scope.targetProjectId || (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0))) {
+    // If the capability itself is not scoped by project (e.g. ASSIGN_PROJECTS scoped to users),
+    // but the actor has other project constraints (e.g. MANAGE_USERS or MANAGE_CLIENTS_PROJECTS scoped to projects),
+    // enforce that target project operations cannot exceed the actor's permitted project boundaries.
+    const fallbackProjects = new Set();
+    const manageUsers = userCapabilities['MANAGE_USERS'];
+    if (manageUsers && !manageUsers.isGlobal && Array.isArray(manageUsers.allowedProjectIds) && manageUsers.allowedProjectIds.length > 0) {
+      manageUsers.allowedProjectIds.forEach((id) => fallbackProjects.add(id));
+    }
+    const manageClients = userCapabilities['MANAGE_CLIENTS_PROJECTS'];
+    if (manageClients && !manageClients.isGlobal && Array.isArray(manageClients.allowedProjectIds) && manageClients.allowedProjectIds.length > 0) {
+      manageClients.allowedProjectIds.forEach((id) => fallbackProjects.add(id));
+    }
+    if (fallbackProjects.size > 0) {
+      if (scope.targetProjectId && !fallbackProjects.has(scope.targetProjectId)) {
+        return false;
+      }
+      if (Array.isArray(scope.targetProjectIds) && scope.targetProjectIds.length > 0) {
+        const allAllowed = scope.targetProjectIds.every((pid) => fallbackProjects.has(pid));
+        if (!allAllowed) return false;
+      }
+    }
   }
 
   return true;
@@ -316,6 +338,19 @@ export async function grantCapability({
     throw error;
   }
 
+  if (scopeType === 'PROJECT' && (!Array.isArray(targetProjectIds) || targetProjectIds.length === 0)) {
+    const error = new Error('At least one project target is required for a project-scoped grant.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+  if (scopeType === 'USER' && (!Array.isArray(targetUserIds) || targetUserIds.length === 0)) {
+    const error = new Error('At least one user target is required for a user-scoped grant.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     // 1. Create the grant
     const grant = await tx.capabilityGrant.create({
@@ -390,6 +425,14 @@ export async function revokeCapability({ actorId, grantId }) {
     return grant; // Already revoked
   }
 
+  // Business Rule: Nobody may revoke capabilities from themselves
+  if (actorId === grant.userId) {
+    const error = new Error('You cannot revoke capabilities from your own account.');
+    error.statusCode = 403;
+    error.code = 'SELF_REVOCATION_FORBIDDEN';
+    throw error;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const updatedGrant = await tx.capabilityGrant.update({
       where: { id: grantId },
@@ -443,12 +486,24 @@ export async function revokeCapabilities({ actorId, grantIds }) {
     return [];
   }
 
+  // Business Rule: Nobody may revoke capabilities from themselves
+  const targetGrants = grants.filter((g) => g.userId !== actorId);
+  if (targetGrants.length === 0) {
+    if (grants.some((g) => g.userId === actorId)) {
+      const error = new Error('You cannot revoke capabilities from your own account.');
+      error.statusCode = 403;
+      error.code = 'SELF_REVOCATION_FORBIDDEN';
+      throw error;
+    }
+    return [];
+  }
+
   const now = new Date();
-  const affectedUserIds = [...new Set(grants.map((g) => g.userId))];
+  const affectedUserIds = [...new Set(targetGrants.map((g) => g.userId))];
 
   const results = await prisma.$transaction(async (tx) => {
     await tx.capabilityGrant.updateMany({
-      where: { id: { in: grants.map((g) => g.id) } },
+      where: { id: { in: targetGrants.map((g) => g.id) } },
       data: {
         revokedAt: now,
         revokedById: actorId,
@@ -456,7 +511,7 @@ export async function revokeCapabilities({ actorId, grantIds }) {
     });
 
     await tx.accessAuditLog.createMany({
-      data: grants.map((g) => ({
+      data: targetGrants.map((g) => ({
         action: 'REVOKE',
         actorId,
         targetUserId: g.userId,
@@ -466,7 +521,7 @@ export async function revokeCapabilities({ actorId, grantIds }) {
       })),
     });
 
-    return grants;
+    return targetGrants;
   });
 
   for (const uid of affectedUserIds) {
@@ -498,9 +553,17 @@ export async function revokeCapabilityFromUsers({ actorId, capabilityCode, userI
     throw error;
   }
 
+  const eligibleUserIds = userIds.filter((uid) => uid !== actorId);
+  if (eligibleUserIds.length === 0) {
+    const error = new Error('You cannot revoke capabilities from your own account.');
+    error.statusCode = 403;
+    error.code = 'SELF_REVOCATION_FORBIDDEN';
+    throw error;
+  }
+
   const activeGrants = await prisma.capabilityGrant.findMany({
     where: {
-      userId: { in: userIds },
+      userId: { in: eligibleUserIds },
       capabilityId: capability.id,
       revokedAt: null,
     },
@@ -565,6 +628,20 @@ export async function updateCapabilityGrant({
 
   // Determine if scope is being modified
   const isScopeProvided = scopeType !== undefined;
+  if (isScopeProvided) {
+    if (scopeType === 'PROJECT' && (!Array.isArray(targetProjectIds) || targetProjectIds.length === 0)) {
+      const error = new Error('At least one project target is required for a project-scoped grant.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+    if (scopeType === 'USER' && (!Array.isArray(targetUserIds) || targetUserIds.length === 0)) {
+      const error = new Error('At least one user target is required for a user-scoped grant.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+  }
   let scopeChanged = false;
   if (isScopeProvided) {
     if (scopeType === 'GLOBAL') {
@@ -787,6 +864,19 @@ export async function grantCapabilitiesToUser({
 
   if (capsToGrant.length === 0) {
     return [];
+  }
+
+  if (scopeType === 'PROJECT' && (!Array.isArray(targetProjectIds) || targetProjectIds.length === 0)) {
+    const error = new Error('At least one project target is required for a project-scoped grant.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+  if (scopeType === 'USER' && (!Array.isArray(targetUserIds) || targetUserIds.length === 0)) {
+    const error = new Error('At least one user target is required for a user-scoped grant.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
   }
 
   const expiryDate = expiresAt ? new Date(expiresAt) : null;
