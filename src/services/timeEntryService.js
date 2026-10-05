@@ -394,10 +394,10 @@ export async function getTimeEntriesForPeriod(actorUser, targetUserId, startDate
     orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  const approvedTimeOff = await prisma.timeOffDay.findMany({
+  const timeOffDays = await prisma.timeOffDay.findMany({
     where: {
       userId: targetUserId,
-      status: 'APPROVED',
+      status: { in: ['APPROVED', 'PENDING'] },
       date: { gte: start, lte: end },
     },
     include: {
@@ -415,13 +415,16 @@ export async function getTimeEntriesForPeriod(actorUser, targetUserId, startDate
     byDay[key].totalMinutes += e.durationMinutes;
   }
 
-  for (const timeOffDay of approvedTimeOff) {
+  for (const timeOffDay of timeOffDays) {
     const key = toIsoDate(timeOffDay.date);
     if (!byDay[key]) byDay[key] = { date: key, totalMinutes: 0, entries: [] };
-    byDay[key].timeOff = {
-      status: 'APPROVED',
-      type: timeOffDay.timeOffRequest.timeOffType,
-    };
+    // Set timeOff, prioritizing APPROVED over PENDING
+    if (!byDay[key].timeOff || timeOffDay.status === 'APPROVED') {
+      byDay[key].timeOff = {
+        status: timeOffDay.status,
+        type: timeOffDay.timeOffRequest?.timeOffType,
+      };
+    }
   }
 
   const days = Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date));

@@ -133,6 +133,8 @@ export async function getTimeOffRequests(actorUser, { userId, status, startDate,
         }
       }
       if (allowed.size > 0) {
+        // Always include the current user so they can view their own requests in their list
+        allowed.add(actorUser.id);
         targetUserId = null;
         allowedUserIds = Array.from(allowed);
       }
