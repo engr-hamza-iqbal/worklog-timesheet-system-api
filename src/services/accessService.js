@@ -774,20 +774,172 @@ export async function updateCapabilityGrants({
     throw error;
   }
 
-  const results = [];
-  for (const grantId of grantIds) {
-    const updated = await updateCapabilityGrant({
-      actorId,
-      grantId,
-      expiresAt,
-      scopeType,
-      targetProjectIds,
-      targetUserIds,
-    });
-    results.push(updated);
+  // 1. Fetch all requested grants in a single query
+  const grants = await prisma.capabilityGrant.findMany({
+    where: { id: { in: grantIds } },
+    include: {
+      capability: true,
+      scopes: true,
+    },
+  });
+
+  if (grants.length === 0) {
+    const error = new Error('No matching capability grants found.');
+    error.statusCode = 404;
+    error.code = 'GRANT_NOT_FOUND';
+    throw error;
   }
 
-  return results;
+  // Check revoked grants
+  const revokedGrant = grants.find((g) => g.revokedAt);
+  if (revokedGrant) {
+    const error = new Error('Cannot edit a revoked capability grant.');
+    error.statusCode = 400;
+    error.code = 'GRANT_REVOKED';
+    throw error;
+  }
+
+  // Check self-modification prohibition
+  const selfGrant = grants.find((g) => g.userId === actorId);
+  if (selfGrant) {
+    const error = new Error('You cannot modify capabilities on your own account.');
+    error.statusCode = 403;
+    error.code = 'SELF_GRANT_FORBIDDEN';
+    throw error;
+  }
+
+  // Validate scope parameters if provided
+  const isScopeProvided = scopeType !== undefined;
+  if (isScopeProvided) {
+    if (scopeType === 'PROJECT' && (!Array.isArray(targetProjectIds) || targetProjectIds.length === 0)) {
+      const error = new Error('At least one project target is required for a project-scoped grant.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+    if (scopeType === 'USER' && (!Array.isArray(targetUserIds) || targetUserIds.length === 0)) {
+      const error = new Error('At least one user target is required for a user-scoped grant.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+  }
+
+  const isExpiryProvided = expiresAt !== undefined;
+  const newExpiresAt = isExpiryProvided
+    ? (expiresAt ? new Date(expiresAt) : null)
+    : undefined;
+
+  const validGrantIds = grants.map((g) => g.id);
+  const auditLogs = [];
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Update expiry in bulk if provided
+    if (isExpiryProvided) {
+      await tx.capabilityGrant.updateMany({
+        where: { id: { in: validGrantIds } },
+        data: { expiresAt: newExpiresAt },
+      });
+
+      for (const grant of grants) {
+        const oldExpiryTime = grant.expiresAt ? new Date(grant.expiresAt).getTime() : null;
+        const newExpiryTime = newExpiresAt ? newExpiresAt.getTime() : null;
+        if (oldExpiryTime !== newExpiryTime) {
+          auditLogs.push({
+            action: 'CHANGE_EXPIRY',
+            actorId,
+            targetUserId: grant.userId,
+            capabilityCode: grant.capability.code,
+            grantId: grant.id,
+            details: {
+              previousExpiresAt: grant.expiresAt,
+              newExpiresAt,
+            },
+          });
+        }
+      }
+    }
+
+    // 2. Update scopes in bulk if provided
+    if (isScopeProvided) {
+      await tx.capabilityGrantScope.deleteMany({
+        where: { grantId: { in: validGrantIds } },
+      });
+
+      if (scopeType === 'PROJECT' && Array.isArray(targetProjectIds) && targetProjectIds.length > 0) {
+        const scopeRows = [];
+        for (const gid of validGrantIds) {
+          for (const pid of targetProjectIds) {
+            scopeRows.push({
+              grantId: gid,
+              scopeType: 'PROJECT',
+              targetProjectId: pid,
+            });
+          }
+        }
+        await tx.capabilityGrantScope.createMany({ data: scopeRows });
+      } else if (scopeType === 'USER' && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
+        const scopeRows = [];
+        for (const gid of validGrantIds) {
+          for (const uid of targetUserIds) {
+            scopeRows.push({
+              grantId: gid,
+              scopeType: 'USER',
+              targetUserId: uid,
+            });
+          }
+        }
+        await tx.capabilityGrantScope.createMany({ data: scopeRows });
+      }
+
+      for (const grant of grants) {
+        auditLogs.push({
+          action: 'CHANGE_SCOPE',
+          actorId,
+          targetUserId: grant.userId,
+          capabilityCode: grant.capability.code,
+          grantId: grant.id,
+          details: {
+            newScopeType: scopeType,
+            targetProjectIds: scopeType === 'PROJECT' ? targetProjectIds : [],
+            targetUserIds: scopeType === 'USER' ? targetUserIds : [],
+          },
+        });
+      }
+    }
+
+    // Insert all audit logs in bulk
+    if (auditLogs.length > 0) {
+      await tx.accessAuditLog.createMany({ data: auditLogs });
+    }
+  });
+
+  // Bust cache for affected users
+  const affectedUserIds = [...new Set(grants.map((g) => g.userId))];
+  for (const uid of affectedUserIds) {
+    bustUserCache(uid);
+  }
+
+  // Return updated grants with full relations in a single query
+  return prisma.capabilityGrant.findMany({
+    where: { id: { in: validGrantIds } },
+    include: {
+      capability: true,
+      grantedBy: { select: { id: true, name: true, email: true } },
+      scopes: {
+        include: {
+          targetUser: { select: { id: true, name: true, email: true } },
+          targetProject: {
+            select: {
+              id: true,
+              name: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 /**
