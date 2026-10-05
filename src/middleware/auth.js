@@ -4,31 +4,7 @@ import { JWT_SECRET } from '../config/env.js';
 import { sendError } from '../utils/response.js';
 import { notifyUserAccessChanged } from '../utils/eventStream.js';
 
-// ── User cache ────────────────────────────────────────────────────────────────
-// Short-lived (30 s) in-memory cache keyed by userId.
-// Eliminates a Supabase round-trip on every authenticated API request.
-// Cache entry is automatically stale after TTL_MS; a deactivated account
-// takes at most one TTL cycle to propagate (acceptable for this use case).
-const USER_CACHE = new Map(); // userId → { user, expiresAt }
-const TTL_MS = 30_000; // 30 seconds
-
-function getCachedUser(userId) {
-  const entry = USER_CACHE.get(userId);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    USER_CACHE.delete(userId);
-    return null;
-  }
-  return entry.user;
-}
-
-function setCachedUser(userId, user) {
-  USER_CACHE.set(userId, { user, expiresAt: Date.now() + TTL_MS });
-}
-
-// Allow other code (e.g. deactivation endpoint) to immediately bust a user's cache entry.
 export function bustUserCache(userId) {
-  USER_CACHE.delete(userId);
   notifyUserAccessChanged(userId, { type: 'CAPABILITIES_CHANGED', userId });
 }
 
@@ -46,26 +22,19 @@ export async function authenticate(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     const { userId } = decoded;
 
-    // Try cache first — avoids a Supabase round-trip on every request
-    let user = getCachedUser(userId);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        accountType: true,
+        isActive: true,
+      },
+    });
 
     if (!user) {
-      user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          accountType: true,
-          isActive: true,
-        },
-      });
-
-      if (!user) {
-        return sendError(res, 'User account no longer exists.', 401, 'USER_NOT_FOUND');
-      }
-
-      setCachedUser(userId, user);
+      return sendError(res, 'User account no longer exists.', 401, 'USER_NOT_FOUND');
     }
 
     if (!user.isActive) {

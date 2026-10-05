@@ -2,6 +2,48 @@ import prisma from '../config/db.js';
 import { Prisma } from '@prisma/client';
 import { getUserActiveCapabilities } from './accessService.js';
 
+async function getReportScope(actorUser) {
+  if (!actorUser || actorUser.accountType === 'ADMIN') return null;
+
+  const capabilities = await getUserActiveCapabilities(actorUser);
+  const reportCapability = capabilities.VIEW_REPORTS;
+  if (!reportCapability) {
+    throw Object.assign(new Error('You do not hold the VIEW_REPORTS capability.'), { status: 403 });
+  }
+  if (reportCapability.isGlobal) return null;
+
+  const allowedUserIds = new Set(reportCapability.allowedUserIds || []);
+  if (reportCapability.allowedProjectIds?.length) {
+    const assignments = await prisma.projectAssignment.findMany({
+      where: {
+        projectId: { in: reportCapability.allowedProjectIds },
+        removedAt: null,
+      },
+      select: { userId: true },
+    });
+    assignments.forEach(({ userId }) => allowedUserIds.add(userId));
+  }
+
+  return {
+    allowedProjectIds: reportCapability.allowedProjectIds || [],
+    allowedUserIds: [...allowedUserIds],
+  };
+}
+
+function reportScopeSql(scope) {
+  if (!scope) return Prisma.empty;
+  const clauses = [];
+  if (scope.allowedUserIds.length) {
+    clauses.push(Prisma.sql`te."userId" IN (${Prisma.join(scope.allowedUserIds)})`);
+  }
+  if (scope.allowedProjectIds.length) {
+    clauses.push(Prisma.sql`te."projectId" IN (${Prisma.join(scope.allowedProjectIds)})`);
+  }
+  if (clauses.length === 1) return Prisma.sql`AND ${clauses[0]}`;
+  if (clauses.length === 2) return Prisma.sql`AND (${clauses[0]} OR ${clauses[1]})`;
+  return Prisma.sql`AND FALSE`;
+}
+
 function date(value, fallback) {
   const parsed = new Date(value || fallback);
   if (Number.isNaN(parsed.getTime())) throw Object.assign(new Error('Report dates must be valid.'), { status: 400 });
@@ -20,15 +62,12 @@ export async function getReports(filters = {}, actorUser = null) {
   const projectId = filters.projectId || null;
   const clientId = filters.clientId || null;
 
-  let scopedProjectClause = Prisma.empty;
+  const reportScope = await getReportScope(actorUser);
+  let scopedProjectClause = reportScopeSql(reportScope);
   let canViewBilling = true;
   if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
-    const repCap = caps['VIEW_REPORTS'];
-    if (repCap && !repCap.isGlobal && Array.isArray(repCap.allowedProjectIds) && repCap.allowedProjectIds.length > 0) {
-      scopedProjectClause = Prisma.sql`AND te."projectId" IN (${Prisma.join(repCap.allowedProjectIds)})`;
-    }
-    canViewBilling = Boolean(caps['VIEW_BILLING']);
+    canViewBilling = caps['VIEW_BILLING']?.isGlobal === true;
   }
 
   const approvedWhere = Prisma.sql`
@@ -87,6 +126,7 @@ export async function getReports(filters = {}, actorUser = null) {
         AND te."workDate" <= ${endDate}::date
         AND (${projectId}::text IS NULL OR te."projectId" = ${projectId})
         AND (${clientId}::text IS NULL OR p."clientId" = ${clientId})
+        ${scopedProjectClause}
       GROUP BY te."status"
       ORDER BY te."status"
     `),
@@ -103,8 +143,14 @@ export async function getReports(filters = {}, actorUser = null) {
   return { startDate, endDate, byProject: sanitizedByProject, byClient: sanitizedByClient, byEmployee, byStatus };
 }
 
-export async function getMissingTimesheets(targetDate) {
+export async function getMissingTimesheets(targetDate, actorUser) {
   const checkDate = date(targetDate, new Date().toISOString().slice(0, 10));
+  const reportScope = await getReportScope(actorUser);
+  const scopeFilter = reportScope
+    ? reportScope.allowedUserIds.length
+      ? Prisma.sql`AND u."id" IN (${Prisma.join(reportScope.allowedUserIds)})`
+      : Prisma.sql`AND FALSE`
+    : Prisma.empty;
 
   const missingEmployees = await prisma.$queryRaw(Prisma.sql`
     SELECT u."id" AS "userId", u."name" AS "userName", u."email"
@@ -123,6 +169,7 @@ export async function getMissingTimesheets(targetDate) {
           AND tod."date" = ${checkDate}::date
           AND tod."status" = 'APPROVED'
       )
+      ${scopeFilter}
     ORDER BY u."name" ASC
   `);
 
@@ -156,6 +203,10 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
   }
 
   const checkDate = date(targetDate, new Date().toISOString().slice(0, 10));
+  const reportScope = await getReportScope(actorUser);
+  if (reportScope && userIds.some((userId) => !reportScope.allowedUserIds.includes(userId))) {
+    throw Object.assign(new Error('One or more employees are outside your report scope.'), { status: 403 });
+  }
   const users = await prisma.user.findMany({
     where: { id: { in: userIds }, isActive: true },
     select: { id: true, name: true, email: true },

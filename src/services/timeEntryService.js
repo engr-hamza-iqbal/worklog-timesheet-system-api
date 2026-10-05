@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../config/db.js';
 import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
 
@@ -108,12 +109,12 @@ async function checkProjectAccessible(userId, projectId, isAdmin) {
   }
 }
 
-async function checkDailyCap(userId, workDate, additionalMinutes, excludeEntryId = null) {
+async function checkDailyCap(db, userId, workDate, additionalMinutes, excludeEntryId = null) {
   const dateStr = toIsoDate(workDate);
   const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
   const endOfDay   = new Date(`${dateStr}T23:59:59.999Z`);
 
-  const entries = await prisma.timeEntry.findMany({
+  const entries = await db.timeEntry.findMany({
     where: {
       userId,
       deletedAt: null,
@@ -136,11 +137,11 @@ async function checkDailyCap(userId, workDate, additionalMinutes, excludeEntryId
   }
 }
 
-async function checkNoApprovedTimeOff(userId, workDate) {
+async function checkNoApprovedTimeOff(db, userId, workDate) {
   const dateStr = toIsoDate(workDate);
   const date = new Date(`${dateStr}T00:00:00.000Z`);
 
-  const timeOffDay = await prisma.timeOffDay.findFirst({
+  const timeOffDay = await db.timeOffDay.findFirst({
     where: { userId, date, status: 'APPROVED' },
   });
   if (timeOffDay) {
@@ -176,13 +177,13 @@ export async function createTimeEntry(actorUser, data) {
   validateDate(workDate);
   validateDescription(description);
   await checkProjectAccessible(actorUser.id, projectId, isAdmin);
-  await Promise.all([
-    checkNoApprovedTimeOff(actorUser.id, workDate),
-    checkDailyCap(actorUser.id, workDate, durationMinutes),
-  ]);
-
   // ── Create entry + history in a transaction ───────────────────────────────
   const entry = await prisma.$transaction(async (tx) => {
+    await Promise.all([
+      checkNoApprovedTimeOff(tx, actorUser.id, workDate),
+      checkDailyCap(tx, actorUser.id, workDate, durationMinutes),
+    ]);
+
     const created = await tx.timeEntry.create({
       data: {
         userId: actorUser.id,
@@ -207,7 +208,7 @@ export async function createTimeEntry(actorUser, data) {
     });
 
     return created;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return formatEntry(entry);
 }
@@ -222,7 +223,7 @@ export async function createTimeEntry(actorUser, data) {
 export async function updateTimeEntry(actorUser, entryId, data) {
   const isAdmin = actorUser.accountType === 'ADMIN';
 
-  const existing = await prisma.timeEntry.findUnique({ where: { id: entryId } });
+  const existing = await prisma.timeEntry.findFirst({ where: { id: entryId, deletedAt: null } });
   if (!existing) {
     throw Object.assign(new Error('Time entry not found.'), { status: 404 });
   }
@@ -250,22 +251,13 @@ export async function updateTimeEntry(actorUser, entryId, data) {
   validateDate(newWorkDate);
   validateDescription(newDescription);
 
-  if (newProjectId !== existing.projectId) {
-    await checkProjectAccessible(existing.userId, newProjectId, isAdmin);
-  } else if (existing.status === 'DRAFT') {
-    // Still validate project is still ACTIVE even if unchanged
-    const project = await prisma.project.findUnique({ where: { id: newProjectId }, select: { status: true } });
-    if (project?.status !== 'ACTIVE') {
-      throw Object.assign(new Error('Cannot log time against a closed project.'), { status: 400 });
-    }
-  }
-
-  await Promise.all([
-    checkNoApprovedTimeOff(existing.userId, newWorkDate),
-    checkDailyCap(existing.userId, newWorkDate, newDurationMinutes, entryId),
-  ]);
-
   const updated = await prisma.$transaction(async (tx) => {
+    await checkProjectAccessible(existing.userId, newProjectId, isAdmin);
+    await Promise.all([
+      checkNoApprovedTimeOff(tx, existing.userId, newWorkDate),
+      checkDailyCap(tx, existing.userId, newWorkDate, newDurationMinutes, entryId),
+    ]);
+
     const prevStatus = existing.status;
     const nextRevision = existing.currentRevisionNumber + 1;
 
@@ -285,8 +277,8 @@ export async function updateTimeEntry(actorUser, entryId, data) {
     // RETURNED → DRAFT on edit (user is addressing the return feedback)
     const newStatus = prevStatus === 'RETURNED' ? 'DRAFT' : prevStatus;
 
-    const result = await tx.timeEntry.update({
-      where: { id: entryId },
+    const updateResult = await tx.timeEntry.updateMany({
+      where: { id: entryId, deletedAt: null, status: prevStatus },
       data: {
         projectId:            newProjectId,
         workDate:             new Date(`${toIsoDate(newWorkDate)}T00:00:00.000Z`),
@@ -295,9 +287,14 @@ export async function updateTimeEntry(actorUser, entryId, data) {
         status:               newStatus,
         currentRevisionNumber: nextRevision,
       },
-      include: {
-        project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
-      },
+    });
+    if (updateResult.count !== 1) {
+      throw Object.assign(new Error('Time entry changed before it could be updated.'), { status: 409 });
+    }
+
+    const result = await tx.timeEntry.findUnique({
+      where: { id: entryId },
+      include: { project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } } },
     });
 
     await logHistory(tx, {
@@ -309,7 +306,7 @@ export async function updateTimeEntry(actorUser, entryId, data) {
     });
 
     return result;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return formatEntry(updated);
 }
@@ -323,7 +320,7 @@ export async function updateTimeEntry(actorUser, entryId, data) {
 export async function deleteTimeEntry(actorUser, entryId) {
   const isAdmin = actorUser.accountType === 'ADMIN';
 
-  const existing = await prisma.timeEntry.findUnique({ where: { id: entryId } });
+  const existing = await prisma.timeEntry.findFirst({ where: { id: entryId, deletedAt: null } });
   if (!existing) {
     throw Object.assign(new Error('Time entry not found.'), { status: 404 });
   }
@@ -350,7 +347,13 @@ export async function deleteTimeEntry(actorUser, entryId) {
       performedById: actorUser.id,
     });
 
-    await tx.timeEntry.update({ where: { id: entryId }, data: { deletedAt: new Date() } });
+    const result = await tx.timeEntry.updateMany({
+      where: { id: entryId, deletedAt: null, status: existing.status },
+      data: { deletedAt: new Date() },
+    });
+    if (result.count !== 1) {
+      throw Object.assign(new Error('Time entry changed before it could be deleted.'), { status: 409 });
+    }
   });
 }
 
@@ -433,6 +436,71 @@ export async function getTimeEntriesForPeriod(actorUser, targetUserId, startDate
   return { days, totalMinutes, startDate, endDate };
 }
 
+export async function getTimeEntryHistory(actorUser, {
+  page = 1,
+  pageSize = 10,
+  search = '',
+  projectId = '',
+  status = '',
+  sortBy = 'workDate',
+  sortOrder = 'desc',
+} = {}) {
+  const allowedSorts = {
+    workDate: { workDate: sortOrder === 'asc' ? 'asc' : 'desc' },
+    project: { project: { name: sortOrder === 'asc' ? 'asc' : 'desc' } },
+    durationMinutes: { durationMinutes: sortOrder === 'asc' ? 'asc' : 'desc' },
+    description: { description: sortOrder === 'asc' ? 'asc' : 'desc' },
+    status: { status: sortOrder === 'asc' ? 'asc' : 'desc' },
+  };
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+  const safePageSize = Math.min(100, Math.max(1, Number.parseInt(pageSize, 10) || 10));
+  const normalizedStatus = status && ['DRAFT', 'SUBMITTED', 'RETURNED', 'APPROVED'].includes(status)
+    ? status
+    : undefined;
+  const trimmedSearch = String(search || '').trim();
+
+  const where = {
+    userId: actorUser.id,
+    deletedAt: null,
+    ...(projectId ? { projectId } : {}),
+    ...(normalizedStatus ? { status: normalizedStatus } : {}),
+    ...(trimmedSearch ? {
+      OR: [
+        { description: { contains: trimmedSearch, mode: 'insensitive' } },
+        { project: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
+      ],
+    } : {}),
+  };
+
+  const [total, entries] = await prisma.$transaction([
+    prisma.timeEntry.count({ where }),
+    prisma.timeEntry.findMany({
+      where,
+      include: {
+        project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
+        histories: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { performedBy: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: [allowedSorts[sortBy] || allowedSorts.workDate, { id: 'asc' }],
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
+    }),
+  ]);
+
+  return {
+    entries: entries.map(formatEntry),
+    pagination: {
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+    },
+  };
+}
+
 /**
  * Batch submit entries from DRAFT or RETURNED → SUBMITTED.
  *
@@ -469,7 +537,13 @@ export async function submitEntries(actorUser, entryIds) {
 
   await prisma.$transaction(async (tx) => {
     for (const e of entries) {
-      await tx.timeEntry.update({ where: { id: e.id }, data: { status: 'SUBMITTED' } });
+      const result = await tx.timeEntry.updateMany({
+        where: { id: e.id, deletedAt: null, status: e.status },
+        data: { status: 'SUBMITTED' },
+      });
+      if (result.count !== 1) {
+        throw Object.assign(new Error(`Entry ${e.id} changed before it could be submitted.`), { status: 409 });
+      }
       await logHistory(tx, {
         timeEntryId: e.id,
         action: e.status === 'RETURNED' ? 'RESUBMIT' : 'SUBMIT',

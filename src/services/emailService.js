@@ -248,7 +248,10 @@ export async function sendTestEmail({
   recipientEmail,
   emailType = 'MISSING_TIMESHEET',
 }) {
-  const targetEmail = recipientEmail || SMTP_USER || 'engr.hamzaiqbal.pk@gmail.com';
+  const targetEmail = recipientEmail || SMTP_USER;
+  if (!targetEmail) {
+    throw new Error('A test email recipient must be provided when SMTP_USER is not configured.');
+  }
   let emailContent;
   let type = emailType;
 

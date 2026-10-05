@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import {
   handleGetTimeEntries,
+  handleGetTimeEntryHistory,
   handleCreateTimeEntry,
   handleUpdateTimeEntry,
   handleDeleteTimeEntry,
@@ -15,6 +16,7 @@ router.use(authenticate);
 
 // GET  /api/timesheets?startDate=&endDate=&userId=  — view entries for a period
 router.get('/',        handleGetTimeEntries);
+router.get('/history', handleGetTimeEntryHistory);
 
 // POST /api/timesheets                              — create a new DRAFT entry
 router.post('/',       handleCreateTimeEntry);

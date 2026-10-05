@@ -15,7 +15,7 @@ export async function handleGetReports(req, res) {
 
 export async function handleGetMissingTimesheets(req, res) {
   try {
-    const data = await getMissingTimesheets(req.query.date);
+    const data = await getMissingTimesheets(req.query.date, req.user);
     return sendSuccess(res, data, 'Missing timesheets retrieved.');
   } catch (error) {
     return sendError(res, error.message, error.status || 500);

@@ -42,7 +42,9 @@ export async function handleLogout(req, res, next) {
 }
 
 export function handleEventStream(req, res) {
-  const token = req.query.token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+  const token = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice('Bearer '.length)
+    : null;
 
   if (!token) {
     return res.status(401).json({ error: 'Token required for event stream.' });

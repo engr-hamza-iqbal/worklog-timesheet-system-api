@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../config/db.js';
 import { checkUserCapability, getUserActiveCapabilities } from './accessService.js';
 import {
@@ -173,17 +174,18 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
   const type = await prisma.timeOffType.findFirst({ where: { id: timeOffTypeId, isActive: true } });
   if (!type) fail('Active time-off type not found.', 404);
 
-  const overlap = await prisma.timeOffRequest.findFirst({
-    where: {
-      userId: actorUser.id,
-      status: { in: ['PENDING', 'APPROVED'] },
-      startDate: { lte: end },
-      endDate: { gte: start },
-    },
-  });
-  if (overlap) fail('This request overlaps an existing pending or approved request.', 409);
-
   const request = await prisma.$transaction(async (tx) => {
+    const overlap = await tx.timeOffRequest.findFirst({
+      where: {
+        userId: actorUser.id,
+        status: { in: ['PENDING', 'APPROVED'] },
+        startDate: { lte: end },
+        endDate: { gte: start },
+      },
+      select: { id: true },
+    });
+    if (overlap) fail('This request overlaps an existing pending or approved request.', 409);
+
     const created = await tx.timeOffRequest.create({
       data: {
         userId: actorUser.id,
@@ -196,7 +198,7 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
       include: requestInclude,
     });
     return created;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   void notifyReviewersOfNewTimeOffRequest(actorUser, request);
 
@@ -267,10 +269,17 @@ export async function cancelTimeOffRequest(actorUser, requestId) {
   }
   if (request.status !== 'PENDING') fail('Only pending requests can be cancelled.');
 
-  await prisma.$transaction([
-    prisma.timeOffRequest.update({ where: { id: requestId }, data: { status: 'CANCELLED' } }),
-    prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId }, data: { status: 'CANCELLED' } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.timeOffRequest.updateMany({
+      where: { id: requestId, userId: actorUser.id, status: 'PENDING' },
+      data: { status: 'CANCELLED' },
+    });
+    if (result.count !== 1) fail('This request changed before it could be cancelled.', 409);
+    await tx.timeOffDay.updateMany({
+      where: { timeOffRequestId: requestId, status: 'PENDING' },
+      data: { status: 'CANCELLED' },
+    });
+  });
   return { id: requestId, status: 'CANCELLED' };
 }
 
@@ -307,10 +316,17 @@ export async function decideTimeOffRequest(actorUser, requestId, decision, comme
   if (request.status !== 'PENDING') fail('Only pending requests can be decided.');
   await assertCanDecide(actorUser, request);
 
-  await prisma.$transaction([
-    prisma.timeOffRequest.update({ where: { id: requestId }, data: { status: decision, decisionComment: comment?.trim() || null, decidedById: actorUser.id, decidedAt: new Date() } }),
-    prisma.timeOffDay.updateMany({ where: { timeOffRequestId: requestId }, data: { status: decision } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.timeOffRequest.updateMany({
+      where: { id: requestId, status: 'PENDING' },
+      data: { status: decision, decisionComment: comment?.trim() || null, decidedById: actorUser.id, decidedAt: new Date() },
+    });
+    if (result.count !== 1) fail('This request changed before it could be decided.', 409);
+    await tx.timeOffDay.updateMany({
+      where: { timeOffRequestId: requestId, status: 'PENDING' },
+      data: { status: decision },
+    });
+  });
 
   const emailContent = buildTimeOffDecidedEmail({
     recipientName: request.user.name,

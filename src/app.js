@@ -25,7 +25,7 @@ app.use((req, res, next) => {
 // Configure CORS for Netlify, Localhost, and specified frontend URLs
 const allowedOrigins = CORS_ORIGIN === '*'
   ? '*'
-  : CORS_ORIGIN.split(',').map((o) => o.trim());
+  : CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -36,12 +36,8 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Check if origin is explicitly allowed or a Netlify deployment preview
-    const isAllowed =
-      allowedOrigins.includes(origin) ||
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      /\.netlify\.app$/.test(origin);
+    const isAllowed = allowedOrigins.includes(origin) ||
+      (NODE_ENV !== 'production' && (origin.includes('localhost') || origin.includes('127.0.0.1')));
 
     if (isAllowed) {
       return callback(null, true);

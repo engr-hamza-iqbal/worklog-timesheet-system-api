@@ -154,11 +154,11 @@ export async function approveEntries(reviewerUser, entryIds) {
   const scope = await buildReviewerScope(reviewerUser);
 
   const entries = await prisma.timeEntry.findMany({
-    where: { id: { in: entryIds } },
+    where: { id: { in: entryIds }, deletedAt: null },
     include: {
       project: {
         include: {
-          rates: { where: { effectiveTo: null }, take: 1, orderBy: { effectiveFrom: 'desc' } },
+          rates: { orderBy: { effectiveFrom: 'desc' } },
         },
       },
     },
@@ -196,12 +196,19 @@ export async function approveEntries(reviewerUser, entryIds) {
   await prisma.$transaction(async (tx) => {
     for (const e of entries) {
       // Snapshot the billing rate at time of approval (for financial lock)
-      const rateSnapshot = e.project?.rates?.[0]?.ratePerHour ?? null;
+      const applicableRate = e.project?.rates?.find((rate) => {
+        const workDate = new Date(e.workDate);
+        return rate.effectiveFrom <= workDate && (!rate.effectiveTo || rate.effectiveTo >= workDate);
+      });
+      const rateSnapshot = applicableRate?.ratePerHour ?? null;
 
-      await tx.timeEntry.update({
-        where: { id: e.id },
+      const result = await tx.timeEntry.updateMany({
+        where: { id: e.id, deletedAt: null, status: 'SUBMITTED' },
         data: { status: 'APPROVED', approvedRateSnapshot: rateSnapshot },
       });
+      if (result.count !== 1) {
+        throw Object.assign(new Error(`Entry ${e.id} changed before it could be approved.`), { status: 409 });
+      }
 
       await logHistory(tx, {
         timeEntryId:    e.id,
@@ -233,8 +240,8 @@ export async function returnEntry(reviewerUser, entryId, comment) {
 
   const scope = await buildReviewerScope(reviewerUser);
 
-  const entry = await prisma.timeEntry.findUnique({
-    where: { id: entryId },
+  const entry = await prisma.timeEntry.findFirst({
+    where: { id: entryId, deletedAt: null },
     include: { user: { select: { id: true, name: true, email: true } }, project: { select: { name: true } } },
   });
   if (!entry) {
@@ -261,7 +268,13 @@ export async function returnEntry(reviewerUser, entryId, comment) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.timeEntry.update({ where: { id: entryId }, data: { status: 'RETURNED' } });
+    const result = await tx.timeEntry.updateMany({
+      where: { id: entryId, deletedAt: null, status: 'SUBMITTED' },
+      data: { status: 'RETURNED' },
+    });
+    if (result.count !== 1) {
+      throw Object.assign(new Error('Entry changed before it could be returned.'), { status: 409 });
+    }
     await logHistory(tx, {
       timeEntryId:    entryId,
       action:         'RETURN',
@@ -308,7 +321,7 @@ export async function reopenEntry(adminUser, entryId, reason) {
     throw Object.assign(new Error('A reopen reason of at least 5 characters is required.'), { status: 400 });
   }
 
-  const entry = await prisma.timeEntry.findUnique({ where: { id: entryId } });
+  const entry = await prisma.timeEntry.findFirst({ where: { id: entryId, deletedAt: null } });
   if (!entry) {
     throw Object.assign(new Error('Time entry not found.'), { status: 404 });
   }
@@ -320,10 +333,13 @@ export async function reopenEntry(adminUser, entryId, reason) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.timeEntry.update({
-      where: { id: entryId },
+    const result = await tx.timeEntry.updateMany({
+      where: { id: entryId, deletedAt: null, status: 'APPROVED' },
       data: { status: 'DRAFT', approvedRateSnapshot: null },
     });
+    if (result.count !== 1) {
+      throw Object.assign(new Error('Entry changed before it could be reopened.'), { status: 409 });
+    }
     await logHistory(tx, {
       timeEntryId:    entryId,
       action:         'REOPEN',

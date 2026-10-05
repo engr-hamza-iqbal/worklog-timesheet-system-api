@@ -2,6 +2,24 @@ import prisma from '../config/db.js';
 import { Prisma } from '@prisma/client';
 import { getUserActiveCapabilities } from './accessService.js';
 
+async function getAnalyticsScope(actorUser) {
+  if (!actorUser || actorUser.accountType === 'ADMIN') return null;
+  const capabilities = await getUserActiveCapabilities(actorUser);
+  const capability = capabilities.VIEW_ANALYTICS;
+  if (!capability) throw Object.assign(new Error('You do not hold the VIEW_ANALYTICS capability.'), { status: 403 });
+  if (capability.isGlobal) return null;
+
+  const allowedUserIds = new Set(capability.allowedUserIds || []);
+  if (capability.allowedProjectIds?.length) {
+    const assignments = await prisma.projectAssignment.findMany({
+      where: { projectId: { in: capability.allowedProjectIds }, removedAt: null },
+      select: { userId: true },
+    });
+    assignments.forEach(({ userId }) => allowedUserIds.add(userId));
+  }
+  return { allowedUserIds: [...allowedUserIds], allowedProjectIds: capability.allowedProjectIds || [] };
+}
+
 function date(value, fallback) {
   const parsed = new Date(value || fallback);
   if (Number.isNaN(parsed.getTime())) throw Object.assign(new Error('Analytics dates must be valid.'), { status: 400 });
@@ -13,14 +31,13 @@ export async function getAnalytics({ startDate, endDate, projectId, clientId } =
   const end = date(endDate, new Date().toISOString().slice(0, 10));
   if (end < start) throw Object.assign(new Error('End date cannot be earlier than start date.'), { status: 400 });
 
-  let scopedProjectClause = Prisma.empty;
-  if (actorUser && actorUser.accountType !== 'ADMIN') {
-    const caps = await getUserActiveCapabilities(actorUser);
-    const analyticsCap = caps['VIEW_ANALYTICS'];
-    if (analyticsCap && !analyticsCap.isGlobal && Array.isArray(analyticsCap.allowedProjectIds) && analyticsCap.allowedProjectIds.length > 0) {
-      scopedProjectClause = Prisma.sql`AND te."projectId" IN (${Prisma.join(analyticsCap.allowedProjectIds)})`;
-    }
-  }
+  const analyticsScope = await getAnalyticsScope(actorUser);
+  const scopeParts = [];
+  if (analyticsScope?.allowedUserIds.length) scopeParts.push(Prisma.sql`te."userId" IN (${Prisma.join(analyticsScope.allowedUserIds)})`);
+  if (analyticsScope?.allowedProjectIds.length) scopeParts.push(Prisma.sql`te."projectId" IN (${Prisma.join(analyticsScope.allowedProjectIds)})`);
+  const scopedProjectClause = analyticsScope
+    ? scopeParts.length ? Prisma.sql`AND (${Prisma.join(scopeParts, ' OR ')})` : Prisma.sql`AND FALSE`
+    : Prisma.empty;
 
   const filters = Prisma.sql`
     te."status" = 'APPROVED' AND te."deletedAt" IS NULL

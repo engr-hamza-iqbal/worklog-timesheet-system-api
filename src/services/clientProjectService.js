@@ -138,7 +138,7 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
 
   if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
-    canViewBilling = Boolean(caps['VIEW_BILLING']);
+    canViewBilling = caps['VIEW_BILLING']?.isGlobal === true;
 
     const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
     const assignCap = caps['ASSIGN_PROJECTS'];
