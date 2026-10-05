@@ -763,6 +763,7 @@ export async function updateCapabilityGrants({
   actorId,
   grantIds,
   expiresAt,
+  grantUpdates,
   scopeType,
   targetProjectIds,
   targetUserIds,
@@ -834,8 +835,35 @@ export async function updateCapabilityGrants({
   const auditLogs = [];
 
   await prisma.$transaction(async (tx) => {
-    // 1. Update expiry in bulk if provided
-    if (isExpiryProvided) {
+    // 1. Update expiry in bulk (if individual grantUpdates provided OR uniform expiresAt provided)
+    if (Array.isArray(grantUpdates) && grantUpdates.length > 0) {
+      for (const update of grantUpdates) {
+        const grant = grants.find((g) => g.id === update.grantId);
+        if (!grant) continue;
+        const targetDate = update.expiresAt !== undefined
+          ? (update.expiresAt ? new Date(update.expiresAt) : null)
+          : grant.expiresAt;
+        const oldExpiryTime = grant.expiresAt ? new Date(grant.expiresAt).getTime() : null;
+        const newExpiryTime = targetDate ? targetDate.getTime() : null;
+        if (oldExpiryTime !== newExpiryTime) {
+          await tx.capabilityGrant.update({
+            where: { id: grant.id },
+            data: { expiresAt: targetDate },
+          });
+          auditLogs.push({
+            action: 'CHANGE_EXPIRY',
+            actorId,
+            targetUserId: grant.userId,
+            capabilityCode: grant.capability.code,
+            grantId: grant.id,
+            details: {
+              previousExpiresAt: grant.expiresAt,
+              newExpiresAt: targetDate,
+            },
+          });
+        }
+      }
+    } else if (isExpiryProvided) {
       await tx.capabilityGrant.updateMany({
         where: { id: { in: validGrantIds } },
         data: { expiresAt: newExpiresAt },

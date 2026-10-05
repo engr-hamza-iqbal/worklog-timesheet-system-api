@@ -155,7 +155,7 @@ export async function handleUpdateCapabilityGrant(req, res, next) {
 
 export async function handleUpdateCapabilityGrants(req, res, next) {
   try {
-    const { grantIds, expiresAt, scopeType, targetProjectIds, targetUserIds } = req.body;
+    const { grantIds, expiresAt, grantUpdates, scopeType, targetProjectIds, targetUserIds } = req.body;
 
     if (!Array.isArray(grantIds) || grantIds.length === 0) {
       const error = new Error('Please provide grantIds array.');
@@ -168,6 +168,7 @@ export async function handleUpdateCapabilityGrants(req, res, next) {
       actorId: req.user.id,
       grantIds,
       expiresAt,
+      grantUpdates,
       scopeType,
       targetProjectIds,
       targetUserIds,
