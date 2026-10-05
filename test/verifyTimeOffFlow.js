@@ -18,9 +18,10 @@ async function runTests() {
   };
   const login = async (email) => (await request('/api/auth/login', { method: 'POST', body: { email, password: PASSWORD } })).body.data.token;
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const createdRequestIds = [];
 
   const day = new Date();
-  day.setUTCDate(day.getUTCDate() + 400 + Math.floor(Math.random() * 100));
+  day.setUTCDate(day.getUTCDate() + 400 + (Date.now() % 100000));
   const startDate = day.toISOString().slice(0, 10);
   day.setUTCDate(day.getUTCDate() + 1);
   const endDate = day.toISOString().slice(0, 10);
@@ -37,6 +38,7 @@ async function runTests() {
     const created = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate, endDate, reason: 'Family appointment' } });
     assert(created.status === 201 && created.body?.data?.days?.length === 2, `Valid time-off request failed to materialize its days: ${created.status} ${JSON.stringify(created.body)}`);
     const requestId = created.body.data.id;
+    createdRequestIds.push(requestId);
 
     const reversed = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate: endDate, endDate: startDate, reason: 'Invalid range' } });
     assert(reversed.status === 400, 'Reversed time-off dates were accepted.');
@@ -58,14 +60,18 @@ async function runTests() {
 
     const second = await request('/api/time-off/requests', { method: 'POST', token: bobToken, body: { timeOffTypeId: typeId, startDate, endDate, reason: 'Second family appointment' } });
     assert(second.status === 201, 'A cancelled time-off period could not be requested again.');
+    createdRequestIds.push(second.body.data.id);
     const approved = await request(`/api/time-off/requests/${second.body.data.id}/decide`, { method: 'POST', token: adminToken, body: { decision: 'APPROVED' } });
     assert(approved.status === 200 && approved.body.data.status === 'APPROVED', `Administrator could not approve a pending request: ${approved.status} ${JSON.stringify(approved.body)}`);
 
     console.log('Time-off flow verification passed.');
   } finally {
     server.close();
+    if (createdRequestIds.length > 0) {
+      await prisma.timeOffRequest.deleteMany({ where: { id: { in: createdRequestIds } } });
+    }
     await prisma.$disconnect();
   }
 }
 
-runTests().catch((error) => { console.error(error); process.exitCode = 1; });
+runTests().then(() => process.exit(0)).catch((error) => { console.error(error); process.exitCode = 1; });

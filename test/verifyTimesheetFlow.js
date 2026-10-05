@@ -29,6 +29,8 @@ async function runTests() {
     if (!condition) throw new Error(message);
   }
 
+  const createdEntryIds = [];
+
   try {
     const adminToken = await login('admin@worklog.local');
     const bobToken = await login('bob@worklog.local');
@@ -41,6 +43,7 @@ async function runTests() {
     const valid = await request('/api/timesheets', { method: 'POST', token: bobToken, body: { projectId: core.id, workDate: WORK_DATE, durationMinutes: 60, description: 'Build API tests' } });
     assert(valid.status === 201, `Valid time entry failed: ${valid.status} ${JSON.stringify(valid.body)}`);
     const bobEntryId = valid.body.data.id;
+    createdEntryIds.push(bobEntryId);
 
     const invalidDuration = await request('/api/timesheets', { method: 'POST', token: bobToken, body: { projectId: core.id, workDate: WORK_DATE, durationMinutes: 35, description: 'Invalid duration' } });
     assert(invalidDuration.status === 400, 'Invalid duration was accepted.');
@@ -57,6 +60,7 @@ async function runTests() {
     const adminEntry = await request('/api/timesheets', { method: 'POST', token: adminToken, body: { projectId: core.id, workDate: WORK_DATE, durationMinutes: 30, description: 'Review workflow fixture' } });
     assert(adminEntry.status === 201, 'Admin fixture entry failed.');
     const adminEntryId = adminEntry.body.data.id;
+    createdEntryIds.push(adminEntryId);
     const adminSubmit = await request('/api/timesheets/submit', { method: 'POST', token: adminToken, body: { entryIds: [adminEntryId] } });
     assert(adminSubmit.status === 200, 'Admin fixture submission failed.');
 
@@ -73,8 +77,14 @@ async function runTests() {
     console.log('Timesheet flow verification passed.');
   } finally {
     server.close();
+    if (createdEntryIds.length > 0) {
+      await prisma.timeEntry.updateMany({
+        where: { id: { in: createdEntryIds } },
+        data: { deletedAt: new Date() },
+      });
+    }
     await prisma.$disconnect();
   }
 }
 
-runTests().catch((error) => { console.error(error); process.exitCode = 1; });
+runTests().then(() => process.exit(0)).catch((error) => { console.error(error); process.exitCode = 1; });
