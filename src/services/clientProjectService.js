@@ -165,12 +165,9 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
         if (manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
           manageUsersCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
         }
-        const assignments = await prisma.projectAssignment.findMany({
-          where: { userId: actorUser.id, removedAt: null },
-          select: { projectId: true },
-        });
-        assignments.forEach(({ projectId }) => allowedIds.add(projectId));
-        where.id = { in: Array.from(allowedIds) };
+        if (allowedIds.size > 0) {
+          where.id = { in: Array.from(allowedIds) };
+        }
       }
     }
   } else if (assignedUserId) {
