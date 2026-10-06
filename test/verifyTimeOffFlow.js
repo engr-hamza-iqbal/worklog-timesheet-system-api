@@ -64,6 +64,17 @@ async function runTests() {
     const approved = await request(`/api/time-off/requests/${second.body.data.id}/decide`, { method: 'POST', token: adminToken, body: { decision: 'APPROVED' } });
     assert(approved.status === 200 && approved.body.data.status === 'APPROVED', `Administrator could not approve a pending request: ${approved.status} ${JSON.stringify(approved.body)}`);
 
+    // Date filter verification
+    const filteredExact = await request(`/api/time-off/requests?startDate=${startDate}&endDate=${endDate}`, { token: bobToken });
+    assert(filteredExact.status === 200 && filteredExact.body.data.some((r) => r.id === second.body.data.id), 'Exact date range filter failed to match request.');
+
+    const pastDate = '2020-01-01';
+    const filteredPast = await request(`/api/time-off/requests?startDate=${pastDate}&endDate=${pastDate}`, { token: bobToken });
+    assert(filteredPast.status === 200 && !filteredPast.body.data.some((r) => r.id === second.body.data.id), 'Date filter incorrectly included request outside range.');
+
+    const invalidRange = await request(`/api/time-off/requests?startDate=${endDate}&endDate=${startDate}`, { token: bobToken });
+    assert(invalidRange.status === 400, 'Reversed date filter range was not rejected with 400.');
+
     console.log('Time-off flow verification passed.');
   } finally {
     server.close();

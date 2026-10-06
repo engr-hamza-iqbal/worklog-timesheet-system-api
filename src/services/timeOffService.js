@@ -12,6 +12,17 @@ function fail(message, status = 400) {
 }
 
 function dateOnly(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+      const [d, m, y] = trimmed.split('/').map(Number);
+      return new Date(Date.UTC(y, m - 1, d));
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d));
+    }
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) fail('Date must be valid.');
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -146,16 +157,20 @@ export async function getTimeOffRequests(actorUser, { userId, status, startDate,
     if (!canView) fail('You can only view your own time-off requests.', 403);
   }
 
+  if (startDate && endDate && dateOnly(endDate) < dateOnly(startDate)) {
+    fail('End date cannot be earlier than start date.', 400);
+  }
+
   const where = {
     ...(targetUserId ? { userId: targetUserId } : {}),
     ...(allowedUserIds ? { userId: { in: allowedUserIds } } : {}),
     ...(status ? { status } : {}),
   };
-  if (startDate || endDate) {
-    where.days = { some: {
-      ...(startDate ? { date: { gte: dateOnly(startDate) } } : {}),
-      ...(endDate ? { date: { lte: dateOnly(endDate) } } : {}),
-    } };
+  if (startDate) {
+    where.startDate = { gte: dateOnly(startDate) };
+  }
+  if (endDate) {
+    where.endDate = { lte: dateOnly(endDate) };
   }
 
   const requests = await prisma.timeOffRequest.findMany({ where, include: requestInclude, orderBy: { startDate: 'desc' } });
