@@ -170,7 +170,7 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
         }
       }
     }
-  } else if (assignedUserId && (actorUser?.accountType !== 'ADMIN' || assignedUserId !== actorUser.id)) {
+  } else if (assignedUserId) {
     where.assignments = { some: { userId: assignedUserId, removedAt: null } };
   }
 
