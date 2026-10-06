@@ -142,7 +142,9 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     where.client = { isActive: true };
   }
 
-  if (actorUser && actorUser.accountType !== 'ADMIN') {
+  if (assignedUserId) {
+    where.assignments = { some: { userId: assignedUserId, removedAt: null } };
+  } else if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
     canViewBilling = caps['VIEW_BILLING']?.isGlobal === true;
 
@@ -150,28 +152,22 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     const assignCap = caps['ASSIGN_PROJECTS'];
     const manageUsersCap = caps['MANAGE_USERS'];
 
-    if (assignedUserId) {
-      where.assignments = { some: { userId: assignedUserId, removedAt: null } };
-    } else {
-      const isGlobal = (manageCap && manageCap.isGlobal) || (assignCap && assignCap.isGlobal);
-      if (!isGlobal) {
-        const allowedIds = new Set();
-        if (manageCap && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
-          manageCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
-        }
-        if (assignCap && Array.isArray(assignCap.allowedProjectIds) && assignCap.allowedProjectIds.length > 0) {
-          assignCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
-        }
-        if (manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
-          manageUsersCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
-        }
-        if (allowedIds.size > 0) {
-          where.id = { in: Array.from(allowedIds) };
-        }
+    const isGlobal = (manageCap && manageCap.isGlobal) || (assignCap && assignCap.isGlobal);
+    if (!isGlobal) {
+      const allowedIds = new Set();
+      if (manageCap && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
+        manageCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+      }
+      if (assignCap && Array.isArray(assignCap.allowedProjectIds) && assignCap.allowedProjectIds.length > 0) {
+        assignCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+      }
+      if (manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
+        manageUsersCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
+      }
+      if (allowedIds.size > 0) {
+        where.id = { in: Array.from(allowedIds) };
       }
     }
-  } else if (assignedUserId) {
-    where.assignments = { some: { userId: assignedUserId, removedAt: null } };
   }
 
   const projects = await prisma.project.findMany(assignedUserId ? {

@@ -295,7 +295,14 @@ export async function updateTimeEntry(actorUser, entryId, data) {
 
     const result = await tx.timeEntry.findUnique({
       where: { id: entryId },
-      include: { project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } } },
+      include: {
+        project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
+        histories: {
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          include: { performedBy: { select: { id: true, name: true } } },
+        },
+      },
     });
 
     await logHistory(tx, {
@@ -391,7 +398,7 @@ export async function getTimeEntriesForPeriod(actorUser, targetUserId, startDate
       project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
       histories: {
         orderBy: { createdAt: 'desc' },
-        take: 1, // most recent history event (e.g. return comment)
+        take: 10, // recent history events (e.g. return comment)
         include: { performedBy: { select: { id: true, name: true } } },
       },
     },
@@ -467,14 +474,32 @@ export async function getTimeEntryHistory(actorUser, {
       ? (userId ? { userId } : {})
       : { userId: actorUser.id }),
     ...(projectId ? { projectId } : {}),
-    ...(normalizedStatus ? { status: normalizedStatus } : {}),
-    ...(trimmedSearch ? {
+  };
+
+  const andConditions = [];
+  if (normalizedStatus === 'RETURNED') {
+    andConditions.push({
+      OR: [
+        { status: 'RETURNED' },
+        { histories: { some: { action: 'RETURN' } } },
+      ],
+    });
+  } else if (normalizedStatus) {
+    andConditions.push({ status: normalizedStatus });
+  }
+
+  if (trimmedSearch) {
+    andConditions.push({
       OR: [
         { description: { contains: trimmedSearch, mode: 'insensitive' } },
         { project: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
       ],
-    } : {}),
-  };
+    });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
+  }
 
   const [total, entries] = await prisma.$transaction([
     prisma.timeEntry.count({ where }),
@@ -484,7 +509,7 @@ export async function getTimeEntryHistory(actorUser, {
         project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
         histories: {
           orderBy: { createdAt: 'desc' },
-          take: 1,
+          take: 10,
           include: { performedBy: { select: { id: true, name: true } } },
         },
       },
@@ -565,6 +590,15 @@ export async function submitEntries(actorUser, entryIds) {
 
 function formatEntry(e) {
   const lastHistory = e.histories?.[0] ?? null;
+  const returnHistory = e.histories?.find((h) => h.action === 'RETURN') ?? null;
+  const wasReturned = Boolean(returnHistory || e.status === 'RETURNED');
+  const returnComment = (e.status === 'RETURNED' && lastHistory?.comment)
+    ? lastHistory.comment
+    : (returnHistory?.comment ?? null);
+  const returnedBy = (e.status === 'RETURNED' && lastHistory?.performedBy)
+    ? lastHistory.performedBy
+    : (returnHistory?.performedBy ?? null);
+
   return {
     id:              e.id,
     userId:          e.userId,
@@ -582,8 +616,10 @@ function formatEntry(e) {
     description:     e.description,
     status:          e.status,
     revisionNumber:  e.currentRevisionNumber,
-    returnComment:   (e.status === 'RETURNED' && lastHistory?.comment) ? lastHistory.comment : null,
-    returnedBy:      (e.status === 'RETURNED' && lastHistory?.performedBy) ? lastHistory.performedBy : null,
+    returnComment,
+    returnedBy,
+    wasReturned,
+    returnedAt:      returnHistory?.createdAt ?? null,
     createdAt:       e.createdAt,
     updatedAt:       e.updatedAt,
   };
