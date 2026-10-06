@@ -200,7 +200,13 @@ export async function approveEntries(reviewerUser, entryIds) {
         const workDate = new Date(e.workDate);
         return rate.effectiveFrom <= workDate && (!rate.effectiveTo || rate.effectiveTo >= workDate);
       });
-      const rateSnapshot = applicableRate?.ratePerHour ?? null;
+      if (!applicableRate) {
+        throw Object.assign(
+          new Error(`Entry ${e.id} cannot be approved because no billing rate applies to its work date.`),
+          { status: 409, code: 'MISSING_BILLING_RATE' },
+        );
+      }
+      const rateSnapshot = applicableRate.ratePerHour;
 
       const result = await tx.timeEntry.updateMany({
         where: { id: e.id, deletedAt: null, status: 'SUBMITTED' },

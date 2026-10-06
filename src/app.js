@@ -57,6 +57,17 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Cookie-authenticated state changes must include a non-simple header so cross-site
+// HTML forms cannot submit authenticated mutations as CSRF requests.
+app.use((req, res, next) => {
+  const hasSessionCookie = /(?:^|;\s*)worklog_session=/.test(req.headers.cookie || '');
+  const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  if (hasSessionCookie && isMutation && req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    return sendError(res, 'CSRF protection rejected this request.', 403, 'CSRF_REJECTED');
+  }
+  return next();
+});
+
 // Mount all routes (/health, /api-docs, /api/auth, etc.)
 app.use('/', routes);
 

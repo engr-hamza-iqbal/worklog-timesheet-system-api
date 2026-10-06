@@ -270,6 +270,7 @@ export async function updateTimeEntry(actorUser, entryId, data) {
         workDate:        existing.workDate,
         durationMinutes: existing.durationMinutes,
         description:     existing.description,
+        billingRateSnapshot: existing.approvedRateSnapshot,
         createdById:     actorUser.id,
       },
     });
@@ -444,6 +445,7 @@ export async function getTimeEntryHistory(actorUser, {
   status = '',
   sortBy = 'workDate',
   sortOrder = 'desc',
+  userId = '',
 } = {}) {
   const allowedSorts = {
     workDate: { workDate: sortOrder === 'asc' ? 'asc' : 'desc' },
@@ -460,8 +462,10 @@ export async function getTimeEntryHistory(actorUser, {
   const trimmedSearch = String(search || '').trim();
 
   const where = {
-    userId: actorUser.id,
     deletedAt: null,
+    ...(actorUser.accountType === 'ADMIN'
+      ? (userId ? { userId } : {})
+      : { userId: actorUser.id }),
     ...(projectId ? { projectId } : {}),
     ...(normalizedStatus ? { status: normalizedStatus } : {}),
     ...(trimmedSearch ? {

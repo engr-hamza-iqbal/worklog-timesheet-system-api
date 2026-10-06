@@ -24,9 +24,7 @@ router.get('/health', async (req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     return sendSuccess(res, { status: 'healthy', database: 'connected' }, 'Service is operational.');
   } catch (err) {
-    return sendError(res, 'Database connection failure', 503, 'SERVICE_UNAVAILABLE', {
-      details: err.message,
-    });
+    return sendError(res, 'Database connection failure', 503, 'SERVICE_UNAVAILABLE');
   }
 });
 

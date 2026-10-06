@@ -16,13 +16,13 @@ router.use(authenticate);
 // GET  /api/reviews                    — view review queue (REVIEW_TIME or Admin)
 // Admin bypasses requireCapability internally in reviewService (buildReviewerScope),
 // but we still let the route through — the service guards access properly.
-router.get('/', handleGetReviewQueue);
+router.get('/', requireCapability('REVIEW_TIME'), handleGetReviewQueue);
 
 // POST /api/reviews/approve             — approve one or more entries
-router.post('/approve', handleApproveEntries);
+router.post('/approve', requireCapability('REVIEW_TIME'), handleApproveEntries);
 
 // POST /api/reviews/return              — return an entry with mandatory comment
-router.post('/return', handleReturnEntry);
+router.post('/return', requireCapability('REVIEW_TIME'), handleReturnEntry);
 
 // POST /api/reviews/reopen              — reopen an approved entry (Admin only)
 router.post('/reopen', requireAdmin(), handleReopenEntry);

@@ -1,13 +1,23 @@
-import jwt from 'jsonwebtoken';
 import authService from '../services/authService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
-import { JWT_SECRET } from '../config/env.js';
 import { registerClient } from '../utils/eventStream.js';
+
+function setSessionCookie(res, token) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const sameSite = process.env.NODE_ENV === 'production' ? 'None' : 'Lax';
+  res.setHeader('Set-Cookie', `worklog_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=86400; SameSite=${sameSite}${secure}`);
+}
+
+function clearSessionCookie(res) {
+  const sameSite = process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax';
+  res.setHeader('Set-Cookie', `worklog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}`);
+}
 
 export async function handleRegister(req, res, next) {
   try {
     const { name, email, password } = req.body;
     const result = await authService.register({ name, email, password });
+    setSessionCookie(res, result.token);
     return sendSuccess(res, result, 'Registration successful.', 201);
   } catch (err) {
     next(err);
@@ -18,6 +28,7 @@ export async function handleLogin(req, res, next) {
   try {
     const { email, password } = req.body;
     const result = await authService.login({ email, password });
+    setSessionCookie(res, result.token);
     return sendSuccess(res, result, 'Login successful.', 200);
   } catch (err) {
     next(err);
@@ -35,6 +46,7 @@ export async function handleGetMe(req, res, next) {
 
 export async function handleLogout(req, res, next) {
   try {
+    clearSessionCookie(res);
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
   } catch (err) {
     next(err);
@@ -42,21 +54,7 @@ export async function handleLogout(req, res, next) {
 }
 
 export function handleEventStream(req, res) {
-  const token = req.headers.authorization?.startsWith('Bearer ')
-    ? req.headers.authorization.slice('Bearer '.length)
-    : null;
-
-  if (!token) {
-    return res.status(401).json({ error: 'Token required for event stream.' });
-  }
-
-  let userId;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    userId = decoded.userId;
-  } catch {
-    return res.status(401).json({ error: 'Invalid token for event stream.' });
-  }
+  const userId = req.user.id;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

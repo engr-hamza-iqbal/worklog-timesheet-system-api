@@ -399,4 +399,5 @@ model EmailLog {
 
   @@index([recipientUserId, emailType, referenceDate, attemptedAt])
   @@index([recipientEmail, createdAt])
+  @@unique([recipientUserId, emailType, referenceDate])
 }

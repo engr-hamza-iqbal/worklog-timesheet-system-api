@@ -12,8 +12,14 @@ export async function getClients(activeOnly = false, actorUser = null) {
   if (actorUser && actorUser.accountType !== 'ADMIN') {
     const caps = await getUserActiveCapabilities(actorUser);
     const manageCap = caps['MANAGE_CLIENTS_PROJECTS'];
-    if (manageCap && !manageCap.isGlobal && Array.isArray(manageCap.allowedProjectIds) && manageCap.allowedProjectIds.length > 0) {
-      allowedProjectIds = manageCap.allowedProjectIds;
+    const assignments = await prisma.projectAssignment.findMany({
+      where: { userId: actorUser.id, removedAt: null },
+      select: { projectId: true },
+    });
+    const visibleProjectIds = new Set(assignments.map(({ projectId }) => projectId));
+    if (manageCap?.allowedProjectIds) manageCap.allowedProjectIds.forEach((id) => visibleProjectIds.add(id));
+    if (!manageCap?.isGlobal) {
+      allowedProjectIds = [...visibleProjectIds];
       where.projects = { some: { id: { in: allowedProjectIds } } };
     }
   }
@@ -156,12 +162,15 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
         if (assignCap && Array.isArray(assignCap.allowedProjectIds) && assignCap.allowedProjectIds.length > 0) {
           assignCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
         }
-        if (allowedIds.size === 0 && manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
+        if (manageUsersCap && Array.isArray(manageUsersCap.allowedProjectIds) && manageUsersCap.allowedProjectIds.length > 0) {
           manageUsersCap.allowedProjectIds.forEach((id) => allowedIds.add(id));
         }
-        if (allowedIds.size > 0) {
-          where.id = { in: Array.from(allowedIds) };
-        }
+        const assignments = await prisma.projectAssignment.findMany({
+          where: { userId: actorUser.id, removedAt: null },
+          select: { projectId: true },
+        });
+        assignments.forEach(({ projectId }) => allowedIds.add(projectId));
+        where.id = { in: Array.from(allowedIds) };
       }
     }
   } else if (assignedUserId) {
@@ -300,7 +309,7 @@ export async function createProject({ clientId, name, initialRatePerHour }, acto
 
     if (initialRatePerHour !== undefined && initialRatePerHour !== null && initialRatePerHour !== '') {
       const rateNum = Number(initialRatePerHour);
-      if (isNaN(rateNum) || rateNum < 0) {
+      if (isNaN(rateNum) || rateNum <= 0) {
         const error = new Error('Billing rate must be a positive number.');
         error.statusCode = 400;
         error.code = 'VALIDATION_ERROR';
@@ -429,8 +438,25 @@ export async function addProjectRate(projectId, { ratePerHour, effectiveFrom }) 
   }
 
   const effectiveDate = effectiveFrom ? new Date(effectiveFrom) : new Date();
+  if (Number.isNaN(effectiveDate.getTime())) {
+    const error = new Error('Effective date must be valid.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
 
   return prisma.$transaction(async (tx) => {
+    const latestRate = await tx.projectRate.findFirst({
+      where: { projectId },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    if (latestRate && effectiveDate <= latestRate.effectiveFrom) {
+      const error = new Error('New rates must start after the latest existing rate.');
+      error.statusCode = 409;
+      error.code = 'RATE_PERIOD_OVERLAP';
+      throw error;
+    }
+
     // Close the previous active rate if exists
     await tx.projectRate.updateMany({
       where: {

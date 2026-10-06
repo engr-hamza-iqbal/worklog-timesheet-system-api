@@ -30,11 +30,13 @@ function getTransporter() {
     transporter = nodemailer.createTransport({
       jsonTransport: true,
     });
-  } else {
+  } else if (NODE_ENV === 'development') {
     // In dev without credentials, use jsonTransport so actions never fail and attempts are safely recorded
     transporter = nodemailer.createTransport({
       jsonTransport: true,
     });
+  } else {
+    throw new Error('SMTP credentials are required outside development and test environments.');
   }
   return transporter;
 }
@@ -189,14 +191,17 @@ export function queueEmail({
   relatedEntityType = null,
   relatedEntityId = null,
   referenceDate: reference = null,
+  existingLogId = null,
 }) {
   if (!recipientEmail) return;
 
   void (async () => {
     let log = null;
     try {
-      log = await prisma.emailLog.create({
-        data: {
+      log = existingLogId
+        ? await prisma.emailLog.findUnique({ where: { id: existingLogId } })
+        : await prisma.emailLog.create({
+          data: {
           recipientUserId,
           recipientEmail,
           emailType,
@@ -205,8 +210,9 @@ export function queueEmail({
           relatedEntityId,
           referenceDate: referenceDate(reference),
           status: 'PENDING',
-        },
-      });
+          },
+        });
+      if (!log) return;
 
       const mailClient = getTransporter();
 
@@ -238,6 +244,29 @@ export function queueEmail({
       }
     }
   })();
+}
+
+export async function reserveEmailLog({
+  recipientUserId = null,
+  recipientEmail,
+  emailType,
+  subject,
+  relatedEntityType = null,
+  relatedEntityId = null,
+  referenceDate: reference = null,
+}) {
+  return prisma.emailLog.create({
+    data: {
+      recipientUserId,
+      recipientEmail,
+      emailType,
+      subject,
+      relatedEntityType,
+      relatedEntityId,
+      referenceDate: referenceDate(reference),
+      status: 'PENDING',
+    },
+  });
 }
 
 /**
@@ -314,6 +343,7 @@ export async function sendTestEmail({
 
 export default {
   queueEmail,
+  reserveEmailLog,
   sendTestEmail,
   canSendMissingTimesheetChase,
   buildMissingTimesheetEmail,

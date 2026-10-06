@@ -20,6 +20,9 @@ export const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 export const SMTP_PORT = Number(process.env.SMTP_PORT) || 465;
 export const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER || null;
 export const SMTP_PASS = (process.env.SMTP_PASS || process.env.APP_PASSWORD || '').replace(/\s+/g, '') || null;
+if (NODE_ENV === 'production' && (!SMTP_USER || !SMTP_PASS)) {
+  throw new Error('SMTP_USER and SMTP_PASS must be configured in production.');
+}
 export const SMTP_SECURE = process.env.SMTP_SECURE === undefined
   ? SMTP_PORT === 465
   : process.env.SMTP_SECURE === 'true';

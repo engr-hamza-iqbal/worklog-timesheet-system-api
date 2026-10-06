@@ -13,7 +13,7 @@ export async function handleGetUsers(req, res, next) {
 export async function handleCreateUser(req, res, next) {
   try {
     const { name, email, password, accountType } = req.body;
-    const user = await userService.createUser({ name, email, password, accountType });
+    const user = await userService.createUser({ name, email, password, accountType, actorUser: req.user });
     return sendSuccess(res, user, 'User created successfully.', 201);
   } catch (err) {
     next(err);

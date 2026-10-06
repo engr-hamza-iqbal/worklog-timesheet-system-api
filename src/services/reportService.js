@@ -215,9 +215,17 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
   const sent = [];
   const skipped = [];
 
-  const { canSendMissingTimesheetChase, buildMissingTimesheetEmail, queueEmail } = await import('./emailService.js');
+  const { canSendMissingTimesheetChase, buildMissingTimesheetEmail, queueEmail, reserveEmailLog } = await import('./emailService.js');
 
   for (const user of users) {
+    const [hasEntry, hasApprovedTimeOff] = await Promise.all([
+      prisma.timeEntry.findFirst({ where: { userId: user.id, workDate: new Date(`${checkDate}T00:00:00.000Z`), deletedAt: null }, select: { id: true } }),
+      prisma.timeOffDay.findFirst({ where: { userId: user.id, date: new Date(`${checkDate}T00:00:00.000Z`), status: 'APPROVED' }, select: { id: true } }),
+    ]);
+    if (hasEntry || hasApprovedTimeOff) {
+      skipped.push({ userId: user.id, name: user.name, reason: 'No missing timesheet for this date' });
+      continue;
+    }
     const canSend = await canSendMissingTimesheetChase(user.id, checkDate);
     if (!canSend) {
       skipped.push({ userId: user.id, name: user.name, reason: 'Already reminded today' });
@@ -229,6 +237,23 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
       missingDates: [checkDate],
     });
 
+    let emailLog;
+    try {
+      emailLog = await reserveEmailLog({
+        recipientUserId: user.id,
+        recipientEmail: user.email,
+        emailType: 'MISSING_TIMESHEET',
+        subject: emailContent.subject,
+        relatedEntityType: 'MissingTimesheet',
+        referenceDate: checkDate,
+      });
+    } catch (error) {
+      if (error.code === 'P2002') {
+        skipped.push({ userId: user.id, name: user.name, reason: 'Already reminded today' });
+        continue;
+      }
+      throw error;
+    }
     queueEmail({
       recipientUserId: user.id,
       recipientEmail: user.email,
@@ -237,6 +262,7 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
       relatedEntityType: 'MissingTimesheet',
       referenceDate: checkDate,
       html: emailContent.html,
+      existingLogId: emailLog.id,
     });
 
     sent.push({ userId: user.id, name: user.name });

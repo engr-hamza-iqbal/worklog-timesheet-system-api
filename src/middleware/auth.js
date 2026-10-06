@@ -11,12 +11,15 @@ export function bustUserCache(userId) {
 // ── Middleware ─────────────────────────────────────────────────────────────────
 export async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
+  const rawCookieToken = req.headers.cookie?.match(/(?:^|;\s*)worklog_session=([^;]+)/)?.[1];
+  const cookieToken = rawCookieToken ? decodeURIComponent(rawCookieToken) : null;
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length)
+    : cookieToken;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!token) {
     return sendError(res, 'Authentication required. Please provide a Bearer token.', 401, 'UNAUTHORIZED');
   }
-
-  const token = authHeader.split(' ')[1];
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);

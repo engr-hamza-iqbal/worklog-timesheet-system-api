@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/db.js';
 import { bustUserCache } from '../middleware/auth.js';
+import { getUserActiveCapabilities } from './accessService.js';
 
 /**
  * List all users with assignment counts
@@ -9,6 +11,17 @@ export async function getUsers(actor = null) {
   const where = {};
   if (actor && actor.accountType !== 'ADMIN') {
     where.accountType = { not: 'ADMIN' };
+    const capabilities = await getUserActiveCapabilities(actor);
+    const canManageUsers = capabilities.MANAGE_USERS;
+    const canAssignProjects = capabilities.ASSIGN_PROJECTS;
+    const allowedUserIds = new Set([
+      ...(canManageUsers?.allowedUserIds || []),
+      ...(canAssignProjects?.allowedUserIds || []),
+      actor.id,
+    ]);
+    if (!canManageUsers?.isGlobal && !canAssignProjects?.isGlobal) {
+      where.id = { in: [...allowedUserIds] };
+    }
   }
 
   const users = await prisma.user.findMany({
@@ -59,15 +72,32 @@ export async function getUsers(actor = null) {
     createdAt: u.createdAt,
     updatedAt: u.updatedAt,
     activeAssignments: u.assignments.map((a) => a.project),
-    activeCapabilitiesCount: u.capabilityGrantsReceived.length,
-    activeCapabilityCodes: u.capabilityGrantsReceived.map((g) => g.capability.code),
+    activeCapabilitiesCount: actor?.accountType === 'ADMIN' || actor?.id === u.id ? u.capabilityGrantsReceived.length : undefined,
+    activeCapabilityCodes: actor?.accountType === 'ADMIN' || actor?.id === u.id
+      ? u.capabilityGrantsReceived.map((g) => g.capability.code)
+      : undefined,
   }));
 }
 
 /**
  * Create a new user (EMPLOYEE or ADMIN)
  */
-export async function createUser({ name, email, password, accountType = 'EMPLOYEE' }) {
+export async function createUser({ name, email, password, accountType = 'EMPLOYEE', actorUser = null }) {
+  if (actorUser?.accountType !== 'ADMIN') {
+    const capabilities = await getUserActiveCapabilities(actorUser);
+    if (!capabilities.MANAGE_USERS?.isGlobal) {
+      const error = new Error('Creating users requires global user-management permission.');
+      error.statusCode = 403;
+      error.code = 'GLOBAL_CAPABILITY_REQUIRED';
+      throw error;
+    }
+  }
+  if (accountType === 'ADMIN' && actorUser?.accountType !== 'ADMIN') {
+    const error = new Error('Only an administrator can create an administrator account.');
+    error.statusCode = 403;
+    error.code = 'ADMIN_ACCOUNT_FORBIDDEN';
+    throw error;
+  }
   if (!name || !name.trim()) {
     const error = new Error('Name is required.');
     error.statusCode = 400;
@@ -150,35 +180,36 @@ export async function updateUserStatus(userId, { isActive }, currentAdminId) {
     throw error;
   }
 
-  // Business Rule: The last active administrator cannot be deactivated
-  if (!isActive && user.accountType === 'ADMIN') {
-    const activeAdminCount = await prisma.user.count({
-      where: {
-        accountType: 'ADMIN',
-        isActive: true,
-      },
-    });
+  const updated = await prisma.$transaction(async (tx) => {
+    if (!isActive && user.accountType === 'ADMIN') {
+      const activeAdminCount = await tx.user.count({ where: { accountType: 'ADMIN', isActive: true } });
+      if (activeAdminCount <= 1) {
+        const error = new Error('Cannot deactivate the last remaining active administrator account.');
+        error.statusCode = 403;
+        error.code = 'LAST_ADMIN_PROTECTED';
+        throw error;
+      }
+    }
 
-    if (activeAdminCount <= 1) {
-      const error = new Error('Cannot deactivate the last remaining active administrator account.');
-      error.statusCode = 403;
-      error.code = 'LAST_ADMIN_PROTECTED';
+    const result = await tx.user.updateMany({
+      where: {
+        id: userId,
+        isActive: user.isActive,
+        accountType: user.accountType,
+      },
+      data: { isActive },
+    });
+    if (result.count !== 1) {
+      const error = new Error('User status changed before this update completed.');
+      error.statusCode = 409;
+      error.code = 'STALE_USER_UPDATE';
       throw error;
     }
-  }
-
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: { isActive },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      accountType: true,
-      isActive: true,
-      updatedAt: true,
-    },
-  });
+    return tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, accountType: true, isActive: true, updatedAt: true },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   // Immediately invalidate auth cache so deactivation takes effect at once
   if (!isActive) bustUserCache(userId);
@@ -219,6 +250,13 @@ export async function updateUser(userId, { name, email, accountType }, actorUser
       const error = new Error('Account type must be either EMPLOYEE or ADMIN.');
       error.statusCode = 400;
       error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+
+    if (accountType === 'ADMIN' && actorUser?.accountType !== 'ADMIN') {
+      const error = new Error('Only an administrator can promote an account to administrator.');
+      error.statusCode = 403;
+      error.code = 'ADMIN_ACCOUNT_FORBIDDEN';
       throw error;
     }
 
@@ -311,37 +349,22 @@ export async function assignUserToProject(projectId, userId, actorUser = null) {
     throw error;
   }
 
-  // Check existing active assignment
-  const existingActive = await prisma.projectAssignment.findFirst({
-    where: {
-      projectId,
-      userId,
-      removedAt: null,
-    },
-  });
-
-  if (existingActive) {
-    const error = new Error('User is already assigned to this project.');
-    error.statusCode = 400;
-    error.code = 'ALREADY_ASSIGNED';
-    throw error;
-  }
-
-  return prisma.projectAssignment.create({
-    data: {
-      projectId,
-      userId,
-      assignedAt: new Date(),
-    },
-    include: {
-      user: {
-        select: { id: true, name: true, email: true },
+  return prisma.$transaction(async (tx) => {
+    const existingActive = await tx.projectAssignment.findFirst({ where: { projectId, userId, removedAt: null } });
+    if (existingActive) {
+      const error = new Error('User is already assigned to this project.');
+      error.statusCode = 400;
+      error.code = 'ALREADY_ASSIGNED';
+      throw error;
+    }
+    return tx.projectAssignment.create({
+      data: { projectId, userId, assignedAt: new Date() },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        project: { select: { id: true, name: true } },
       },
-      project: {
-        select: { id: true, name: true },
-      },
-    },
-  });
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 /**
