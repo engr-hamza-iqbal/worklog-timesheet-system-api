@@ -2,6 +2,7 @@ import http from 'http';
 import app from '../src/app.js';
 import prisma from '../src/config/db.js';
 import swaggerSpec from '../src/docs/swagger.js';
+import { resetRateLimitBuckets } from '../src/middleware/rateLimit.js';
 
 async function runTests() {
   console.log('--- Starting Authentication & Access Control Verification (ESM) ---');
@@ -90,13 +91,13 @@ async function runTests() {
       if (limited.status === 429) rateLimited = true;
     }
     if (!rateLimited) throw new Error('Authentication rate limiter did not reject excessive requests.');
+    resetRateLimitBuckets();
     console.log('✔ Authentication rate limiter rejects excessive requests.');
 
     console.log('--- ALL AUTH VERIFICATION TESTS PASSED SUCCESSFULLY (ESM) ---');
   } finally {
     server.close();
     await prisma.$disconnect();
-    process.exit(0);
   }
 }
 

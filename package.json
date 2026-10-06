@@ -19,7 +19,9 @@
     "test:timeoff": "node test/verifyTimeOffFlow.js",
     "test:expiry": "node test/verifyExpiryFlow.js",
     "test:history": "node test/verifyHistoryFlow.js",
-    "test": "node test/runAll.js"
+    "test:security": "node test/verifySecurityHardening.js",
+    "test": "node test/runAll.js",
+    "clean:rate-periods": "node scripts/cleanRatePeriods.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

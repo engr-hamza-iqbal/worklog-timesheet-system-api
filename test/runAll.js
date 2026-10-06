@@ -9,6 +9,7 @@ const testFiles = [
   'verifyTimeOffFlow.js',
   'verifyExpiryFlow.js',
   'verifyHistoryFlow.js',
+  'verifySecurityHardening.js',
 ];
 
 for (const testFile of testFiles) {

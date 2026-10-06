@@ -1,23 +1,32 @@
+import crypto from 'node:crypto';
 import authService from '../services/authService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { registerClient } from '../utils/eventStream.js';
 
-function setSessionCookie(res, token) {
+function setAuthCookies(res, token) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   const sameSite = process.env.NODE_ENV === 'production' ? 'None' : 'Lax';
-  res.setHeader('Set-Cookie', `worklog_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=86400; SameSite=${sameSite}${secure}`);
+  const csrfToken = crypto.randomBytes(32).toString('hex');
+  const sessionCookie = `worklog_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=86400; SameSite=${sameSite}${secure}`;
+  const csrfCookie = `worklog_csrf_token=${encodeURIComponent(csrfToken)}; Path=/; Max-Age=86400; SameSite=${sameSite}${secure}`;
+  res.setHeader('Set-Cookie', [sessionCookie, csrfCookie]);
+  return csrfToken;
 }
 
-function clearSessionCookie(res) {
+function clearAuthCookies(res) {
   const sameSite = process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax';
-  res.setHeader('Set-Cookie', `worklog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}`);
+  res.setHeader('Set-Cookie', [
+    `worklog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}`,
+    `worklog_csrf_token=; Path=/; Max-Age=0; SameSite=${sameSite}`,
+  ]);
 }
 
 export async function handleRegister(req, res, next) {
   try {
-    const { name, email, password } = req.body;
-    const result = await authService.register({ name, email, password });
-    setSessionCookie(res, result.token);
+    const { name, email, password, invitationToken } = req.body;
+    const result = await authService.register({ name, email, password, invitationToken });
+    const csrfToken = setAuthCookies(res, result.token);
+    result.csrfToken = csrfToken;
     return sendSuccess(res, result, 'Registration successful.', 201);
   } catch (err) {
     next(err);
@@ -28,8 +37,23 @@ export async function handleLogin(req, res, next) {
   try {
     const { email, password } = req.body;
     const result = await authService.login({ email, password });
-    setSessionCookie(res, result.token);
+    const csrfToken = setAuthCookies(res, result.token);
+    result.csrfToken = csrfToken;
     return sendSuccess(res, result, 'Login successful.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleCreateInvitation(req, res, next) {
+  try {
+    const { email, expiresInHours } = req.body;
+    const invitation = authService.createInvitation({
+      email,
+      invitedByUser: req.user,
+      expiresInHours: expiresInHours ? Number(expiresInHours) : 72,
+    });
+    return sendSuccess(res, invitation, 'Invitation created successfully.', 201);
   } catch (err) {
     next(err);
   }
@@ -46,7 +70,7 @@ export async function handleGetMe(req, res, next) {
 
 export async function handleLogout(req, res, next) {
   try {
-    clearSessionCookie(res);
+    clearAuthCookies(res);
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
   } catch (err) {
     next(err);
@@ -84,6 +108,7 @@ export function handleEventStream(req, res) {
 export default {
   handleRegister,
   handleLogin,
+  handleCreateInvitation,
   handleGetMe,
   handleLogout,
   handleEventStream,

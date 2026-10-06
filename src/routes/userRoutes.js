@@ -13,7 +13,7 @@ import { requireCapability } from '../middleware/permission.js';
 
 const router = express.Router();
 
-router.use(authenticate);
+router.use(['/users', '/projects/assign', '/assignments'], authenticate);
 
 // User Management
 router.get('/users', handleGetUsers);

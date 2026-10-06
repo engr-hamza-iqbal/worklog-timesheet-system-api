@@ -47,7 +47,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-CSRF-Token'],
   optionsSuccessStatus: 204,
 };
 
@@ -57,13 +57,21 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Cookie-authenticated state changes must include a non-simple header so cross-site
-// HTML forms cannot submit authenticated mutations as CSRF requests.
+// Formal synchronizer-token / double-submit CSRF protection:
+// Cookie-authenticated state changes (POST, PUT, PATCH, DELETE) must include a valid matching X-CSRF-Token header.
 app.use((req, res, next) => {
-  const hasSessionCookie = /(?:^|;\s*)worklog_session=/.test(req.headers.cookie || '');
+  const cookieHeader = req.headers.cookie || '';
+  const hasSessionCookie = /(?:^|;\s*)worklog_session=/.test(cookieHeader);
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-  if (hasSessionCookie && isMutation && req.headers['x-requested-with'] !== 'XMLHttpRequest') {
-    return sendError(res, 'CSRF protection rejected this request.', 403, 'CSRF_REJECTED');
+
+  if (hasSessionCookie && isMutation) {
+    const csrfCookieMatch = cookieHeader.match(/(?:^|;\s*)worklog_csrf_token=([^;]+)/);
+    const csrfCookie = csrfCookieMatch ? decodeURIComponent(csrfCookieMatch[1]) : null;
+    const csrfHeader = req.headers['x-csrf-token'];
+
+    if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+      return sendError(res, 'CSRF protection rejected this request. Missing or invalid CSRF token.', 403, 'CSRF_REJECTED');
+    }
   }
   return next();
 });

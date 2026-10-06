@@ -112,5 +112,72 @@ export async function getAnalytics({ startDate, endDate, projectId, clientId, em
       GROUP BY tod."status" ORDER BY tod."status"
     `),
   ]);
-  return { startDate: start, endDate: end, weekly, projects, clients, employees, statusBreakdown, employeeWeekly, timeOff };
+
+  const [submissionTimelinessOverall, submissionTimelinessByPerson] = await Promise.all([
+    prisma.$queryRaw(Prisma.sql`
+      WITH first_submissions AS (
+        SELECT teh."timeEntryId", MIN(teh."createdAt") AS "submittedAt"
+        FROM "TimeEntryHistory" teh
+        WHERE teh."action" = 'SUBMIT'
+        GROUP BY teh."timeEntryId"
+      )
+      SELECT 
+        COUNT(te."id")::int AS "totalSubmissions",
+        COALESCE(ROUND(AVG(GREATEST(0, (DATE(fs."submittedAt") - te."workDate"))), 1), 0)::float AS "avgLagDays",
+        COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") <= 2 THEN 1 END)::int AS "onTimeCount",
+        COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") > 2 THEN 1 END)::int AS "lateCount",
+        COALESCE(ROUND((COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") <= 2 THEN 1 END)::numeric / NULLIF(COUNT(te."id"), 0)) * 100, 1), 100)::float AS "onTimePercentage"
+      FROM "TimeEntry" te
+      JOIN "Project" p ON p."id" = te."projectId"
+      JOIN first_submissions fs ON fs."timeEntryId" = te."id"
+      WHERE ${allStatusFilters}
+    `),
+    prisma.$queryRaw(Prisma.sql`
+      WITH first_submissions AS (
+        SELECT teh."timeEntryId", MIN(teh."createdAt") AS "submittedAt"
+        FROM "TimeEntryHistory" teh
+        WHERE teh."action" = 'SUBMIT'
+        GROUP BY teh."timeEntryId"
+      )
+      SELECT 
+        u."id" AS "userId",
+        u."name" AS "name",
+        COUNT(te."id")::int AS "totalSubmissions",
+        COALESCE(ROUND(AVG(GREATEST(0, (DATE(fs."submittedAt") - te."workDate"))), 1), 0)::float AS "avgLagDays",
+        COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") <= 2 THEN 1 END)::int AS "onTimeCount",
+        COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") > 2 THEN 1 END)::int AS "lateCount",
+        COALESCE(ROUND((COUNT(CASE WHEN (DATE(fs."submittedAt") - te."workDate") <= 2 THEN 1 END)::numeric / NULLIF(COUNT(te."id"), 0)) * 100, 1), 100)::float AS "onTimePercentage"
+      FROM "TimeEntry" te
+      JOIN "User" u ON u."id" = te."userId"
+      JOIN "Project" p ON p."id" = te."projectId"
+      JOIN first_submissions fs ON fs."timeEntryId" = te."id"
+      WHERE ${allStatusFilters}
+      GROUP BY u."id", u."name"
+      ORDER BY "lateCount" DESC, "avgLagDays" DESC
+    `),
+  ]);
+
+  const submissionTimeliness = {
+    overall: submissionTimelinessOverall[0] || {
+      totalSubmissions: 0,
+      avgLagDays: 0,
+      onTimeCount: 0,
+      lateCount: 0,
+      onTimePercentage: 100,
+    },
+    byPerson: submissionTimelinessByPerson || [],
+  };
+
+  return {
+    startDate: start,
+    endDate: end,
+    weekly,
+    projects,
+    clients,
+    employees,
+    statusBreakdown,
+    employeeWeekly,
+    timeOff,
+    submissionTimeliness,
+  };
 }

@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
-import { ALLOW_PUBLIC_REGISTRATION, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
+import { ALLOW_PUBLIC_REGISTRATION, REGISTRATION_ALLOWED_DOMAINS, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getUserActiveCapabilities } from './accessService.js';
 
 export function generateToken(user) {
@@ -16,13 +16,63 @@ export function generateToken(user) {
   );
 }
 
-export async function register({ name, email, password }) {
-  if (!ALLOW_PUBLIC_REGISTRATION) {
-    const error = new Error('Public registration is disabled. Request an invitation from an administrator.');
-    error.statusCode = 403;
-    error.code = 'REGISTRATION_DISABLED';
+export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) {
+  if (!email || !email.trim()) {
+    const error = new Error('Email is required for invitation.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
     throw error;
   }
+  const normalizedEmail = email.trim().toLowerCase();
+  const token = jwt.sign(
+    {
+      email: normalizedEmail,
+      invitedBy: invitedByUser.id,
+      purpose: 'REGISTRATION_INVITATION',
+    },
+    JWT_SECRET,
+    { expiresIn: `${expiresInHours}h` }
+  );
+  return {
+    invitationToken: token,
+    email: normalizedEmail,
+    expiresInHours,
+    expiresAt: new Date(Date.now() + expiresInHours * 3600 * 1000).toISOString(),
+  };
+}
+
+export function verifyInvitationToken(token, expectedEmail = null) {
+  if (!token) {
+    const error = new Error('Invitation token is required.');
+    error.statusCode = 400;
+    error.code = 'INVALID_INVITATION';
+    throw error;
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.purpose !== 'REGISTRATION_INVITATION') {
+      const error = new Error('Invalid invitation token.');
+      error.statusCode = 400;
+      error.code = 'INVALID_INVITATION';
+      throw error;
+    }
+    if (expectedEmail && decoded.email !== expectedEmail.trim().toLowerCase()) {
+      const error = new Error('Invitation token does not match this email address.');
+      error.statusCode = 403;
+      error.code = 'INVITATION_EMAIL_MISMATCH';
+      throw error;
+    }
+    return decoded;
+  } catch (err) {
+    if (err.statusCode) throw err;
+    const error = new Error(err.name === 'TokenExpiredError' ? 'Invitation token has expired.' : 'Invalid invitation token.');
+    error.statusCode = 400;
+    error.code = err.name === 'TokenExpiredError' ? 'INVITATION_EXPIRED' : 'INVALID_INVITATION';
+    throw error;
+  }
+}
+
+export async function register({ name, email, password, invitationToken }) {
   if (!name || !name.trim()) {
     const error = new Error('Name is required.');
     error.statusCode = 400;
@@ -46,6 +96,33 @@ export async function register({ name, email, password }) {
     throw error;
   }
 
+  const userCount = await prisma.user.count();
+  const isFirstUser = userCount === 0;
+
+  let invitation = null;
+  if (invitationToken) {
+    invitation = verifyInvitationToken(invitationToken, normalizedEmail);
+  }
+
+  if (!isFirstUser && !invitation) {
+    if (!ALLOW_PUBLIC_REGISTRATION) {
+      const error = new Error('Public registration is disabled. Request an invitation from an administrator.');
+      error.statusCode = 403;
+      error.code = 'REGISTRATION_DISABLED';
+      throw error;
+    }
+
+    if (REGISTRATION_ALLOWED_DOMAINS.length > 0) {
+      const domain = normalizedEmail.split('@')[1];
+      if (!domain || !REGISTRATION_ALLOWED_DOMAINS.includes(domain)) {
+        const error = new Error(`Registration is restricted to authorized email domains: ${REGISTRATION_ALLOWED_DOMAINS.join(', ')}`);
+        error.statusCode = 403;
+        error.code = 'DOMAIN_NOT_ALLOWED';
+        throw error;
+      }
+    }
+  }
+
   const existingUser = await prisma.user.findUnique({
     where: { email: normalizedEmail },
   });
@@ -58,8 +135,7 @@ export async function register({ name, email, password }) {
   }
 
   // If system has 0 users, first user becomes initial ADMIN; otherwise EMPLOYEE
-  const userCount = await prisma.user.count();
-  const accountType = userCount === 0 ? 'ADMIN' : 'EMPLOYEE';
+  const accountType = isFirstUser ? 'ADMIN' : 'EMPLOYEE';
 
   const passwordHash = await bcrypt.hash(password, 10);
 
@@ -183,6 +259,8 @@ export async function getCurrentUser(userId) {
 
 export default {
   generateToken,
+  createInvitation,
+  verifyInvitationToken,
   register,
   login,
   getCurrentUser,

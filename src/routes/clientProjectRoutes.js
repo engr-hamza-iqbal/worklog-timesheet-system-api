@@ -14,7 +14,7 @@ import { requireCapability } from '../middleware/permission.js';
 
 const router = express.Router();
 
-router.use(authenticate);
+router.use(['/clients', '/projects'], authenticate);
 
 // Clients
 router.get('/clients', handleGetClients);
