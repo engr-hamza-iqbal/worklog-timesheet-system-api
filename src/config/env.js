@@ -11,6 +11,7 @@ if (NODE_ENV === 'production' && !configuredJwtSecret) {
 }
 export const JWT_SECRET = configuredJwtSecret || 'local-development-only-jwt-secret';
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+export const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || NODE_ENV !== 'production';
 export const FRONTEND_URL = process.env.FRONTEND_URL;
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || (NODE_ENV === 'production' ? '' : '*');
 if (NODE_ENV === 'production' && (!FRONTEND_URL || !CORS_ORIGIN || CORS_ORIGIN === '*' || /localhost|127\.0\.0\.1/.test(CORS_ORIGIN))) {
@@ -34,6 +35,7 @@ export default {
   DATABASE_URL,
   JWT_SECRET,
   JWT_EXPIRES_IN,
+  ALLOW_PUBLIC_REGISTRATION,
   FRONTEND_URL,
   CORS_ORIGIN,
   EMAIL_FROM,

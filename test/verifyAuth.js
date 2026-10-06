@@ -80,6 +80,18 @@ async function runTests() {
     }
     console.log('✔ Capability middleware rejects unauthenticated access.');
 
+    // 7. Authentication abuse controls reject excessive requests without touching the database
+    let rateLimited = false;
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      const limited = await request('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: '', password: '' }),
+      });
+      if (limited.status === 429) rateLimited = true;
+    }
+    if (!rateLimited) throw new Error('Authentication rate limiter did not reject excessive requests.');
+    console.log('✔ Authentication rate limiter rejects excessive requests.');
+
     console.log('--- ALL AUTH VERIFICATION TESTS PASSED SUCCESSFULLY (ESM) ---');
   } finally {
     server.close();

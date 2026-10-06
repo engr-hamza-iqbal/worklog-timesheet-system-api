@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
-import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
+import { ALLOW_PUBLIC_REGISTRATION, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getUserActiveCapabilities } from './accessService.js';
 
 export function generateToken(user) {
@@ -17,6 +17,12 @@ export function generateToken(user) {
 }
 
 export async function register({ name, email, password }) {
+  if (!ALLOW_PUBLIC_REGISTRATION) {
+    const error = new Error('Public registration is disabled. Request an invitation from an administrator.');
+    error.statusCode = 403;
+    error.code = 'REGISTRATION_DISABLED';
+    throw error;
+  }
   if (!name || !name.trim()) {
     const error = new Error('Name is required.');
     error.statusCode = 400;
