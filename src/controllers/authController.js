@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import authService from '../services/authService.js';
+import otpService from '../services/otpService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { registerClient } from '../utils/eventStream.js';
 
@@ -21,10 +22,20 @@ function clearAuthCookies(res) {
   ]);
 }
 
+export async function handleSendOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    const result = await otpService.sendOtp(email);
+    return sendSuccess(res, result, 'Verification code sent to your email. Valid for 10 minutes.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function handleRegister(req, res, next) {
   try {
-    const { name, email, password, invitationToken } = req.body;
-    const result = await authService.register({ name, email, password, invitationToken });
+    const { name, email, password, otp, invitationToken } = req.body;
+    const result = await authService.register({ name, email, password, otp, invitationToken });
     const csrfToken = setAuthCookies(res, result.token);
     result.csrfToken = csrfToken;
     return sendSuccess(res, result, 'Registration successful.', 201);
@@ -106,6 +117,7 @@ export function handleEventStream(req, res) {
 }
 
 export default {
+  handleSendOtp,
   handleRegister,
   handleLogin,
   handleCreateInvitation,

@@ -10,6 +10,7 @@ const testFiles = [
   'verifyExpiryFlow.js',
   'verifyHistoryFlow.js',
   'verifySecurityHardening.js',
+  'verifyOtpAndPassStrength.js',
 ];
 
 for (const testFile of testFiles) {

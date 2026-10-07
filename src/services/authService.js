@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
 import { ALLOW_PUBLIC_REGISTRATION, REGISTRATION_ALLOWED_DOMAINS, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getUserActiveCapabilities } from './accessService.js';
+import otpService from './otpService.js';
 
 export function generateToken(user) {
   return jwt.sign(
@@ -72,7 +73,7 @@ export function verifyInvitationToken(token, expectedEmail = null) {
   }
 }
 
-export async function register({ name, email, password, invitationToken }) {
+export async function register({ name, email, password, otp, invitationToken }) {
   if (!name || !name.trim()) {
     const error = new Error('Name is required.');
     error.statusCode = 400;
@@ -95,6 +96,31 @@ export async function register({ name, email, password, invitationToken }) {
     error.code = 'VALIDATION_ERROR';
     throw error;
   }
+
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+  if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) {
+    const missing = [];
+    if (!hasUpper) missing.push('an uppercase letter');
+    if (!hasLower) missing.push('a lowercase letter');
+    if (!hasDigit) missing.push('a number');
+    if (!hasSpecial) missing.push('a special character');
+    const error = new Error(`Password is too weak. It must contain ${missing.join(', ')}.`);
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  // Verify and consume the 10-minute email verification OTP
+  if (!otp) {
+    const error = new Error('Email verification code is required.');
+    error.statusCode = 400;
+    error.code = 'OTP_REQUIRED';
+    throw error;
+  }
+  otpService.consumeOtp(normalizedEmail, otp);
 
   const userCount = await prisma.user.count();
   const isFirstUser = userCount === 0;

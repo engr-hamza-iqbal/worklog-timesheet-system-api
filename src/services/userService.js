@@ -121,6 +121,22 @@ export async function createUser({ name, email, password, accountType = 'EMPLOYE
     throw error;
   }
 
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+  if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) {
+    const missing = [];
+    if (!hasUpper) missing.push('an uppercase letter');
+    if (!hasLower) missing.push('a lowercase letter');
+    if (!hasDigit) missing.push('a number');
+    if (!hasSpecial) missing.push('a special character');
+    const error = new Error(`Password is too weak. It must contain ${missing.join(', ')}.`);
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
   if (!['EMPLOYEE', 'ADMIN'].includes(accountType)) {
     const error = new Error('Account type must be either EMPLOYEE or ADMIN.');
     error.statusCode = 400;
