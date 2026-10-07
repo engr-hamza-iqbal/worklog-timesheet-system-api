@@ -73,9 +73,31 @@ export async function handleCreateInvitation(req, res, next) {
 export async function handleListInvitations(req, res, next) {
   try {
     const invitations = await authService.getInvitations();
-    return sendSuccess(res, invitations, 'Invitations retrieved successfully.', 200);
+    return sendSuccess(res, { invitations }, 'Invitations retrieved successfully.', 200);
   } catch (err) {
     next(err);
+  }
+}
+
+export async function handleVerifyInvitation(req, res, next) {
+  try {
+    const { token, expectedEmail } = req.body;
+    if (!token) {
+      return sendError(res, 'Invitation token is required.', 400, 'INVALID_INVITATION');
+    }
+    const verified = await authService.verifyInvitationToken(token, expectedEmail);
+    return sendSuccess(
+      res,
+      {
+        valid: true,
+        email: verified.email,
+        expiresAt: verified.exp ? new Date(verified.exp * 1000).toISOString() : null,
+      },
+      'Invitation token is valid.',
+      200
+    );
+  } catch (err) {
+    return sendError(res, err.message, err.statusCode || 400, err.code || 'INVALID_INVITATION');
   }
 }
 
@@ -140,6 +162,9 @@ export default {
   handleRegister,
   handleLogin,
   handleCreateInvitation,
+  handleListInvitations,
+  handleVerifyInvitation,
+  handleRevokeInvitation,
   handleGetMe,
   handleLogout,
   handleEventStream,

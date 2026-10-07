@@ -159,7 +159,7 @@ async function runOtpTests() {
     // 8c. Expire used invitation token - second attempt must be rejected even if 72 hours remain!
     let consumedErrorCaught = false;
     try {
-      authService.verifyInvitationToken(inviteObj.invitationToken);
+      await authService.verifyInvitationToken(inviteObj.invitationToken);
     } catch (err) {
       if (err.code === 'INVITATION_ALREADY_USED') {
         consumedErrorCaught = true;
@@ -197,7 +197,7 @@ async function runOtpTests() {
 
     let revokeErrorCaught = false;
     try {
-      authService.verifyInvitationToken(revocableInvite.invitationToken);
+      await authService.verifyInvitationToken(revocableInvite.invitationToken);
     } catch (err) {
       if (err.code === 'INVITATION_REVOKED') {
         revokeErrorCaught = true;
@@ -207,6 +207,37 @@ async function runOtpTests() {
       throw new Error('Expected verifyInvitationToken to reject revoked token with INVITATION_REVOKED');
     }
     console.log('✔ Admin can revoke invitation links, immediately invalidating and expiring them.');
+
+    // 8e. Single character tampering test: altering any character must reject verification
+    const freshEmail = `tamper-check-${Date.now()}@example.com`;
+    const freshInvite = await authService.createInvitation({
+      email: freshEmail,
+      invitedByUser: { id: 'admin-tester-id', name: 'Admin Tester' },
+    });
+
+    // Valid check
+    const validVerifyRes = await request('/api/auth/verify-invitation', {
+      method: 'POST',
+      body: JSON.stringify({ token: freshInvite.invitationToken }),
+    });
+    if (validVerifyRes.status !== 200 || !validVerifyRes.body?.data?.valid) {
+      throw new Error('Expected verify-invitation to return 200 valid for intact token');
+    }
+
+    // Tamper by 1 char in signature
+    const originalToken = freshInvite.invitationToken;
+    const lastChar = originalToken.slice(-1);
+    const tamperedChar = lastChar === 'A' ? 'B' : 'A';
+    const tamperedToken = originalToken.slice(0, -1) + tamperedChar;
+
+    const tamperedVerifyRes = await request('/api/auth/verify-invitation', {
+      method: 'POST',
+      body: JSON.stringify({ token: tamperedToken }),
+    });
+    if (tamperedVerifyRes.status !== 400) {
+      throw new Error(`Expected tampered token to return 400, got ${tamperedVerifyRes.status}`);
+    }
+    console.log('✔ Altering even a single character in the invitation token causes instant verification rejection (400).');
 
     // 8e. Registration without invitation still strictly requires OTP
     const nonInvitedEmail = `public-no-otp-${Date.now()}@example.com`;

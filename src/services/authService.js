@@ -9,18 +9,35 @@ import { getUserActiveCapabilities } from './accessService.js';
 import otpService from './otpService.js';
 import invitationStore from './invitationStore.js';
 
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.resolve(__dirname, '../../data');
+const CONSUMED_TOKENS_FILE = path.join(DATA_DIR, 'consumed_invitations.json');
+const CWD_CONSUMED_TOKENS_FILE = path.resolve(process.cwd(), 'data/consumed_invitations.json');
+
 // Consumed invitation tokens ledger (persisted to disk + in-memory Set)
 const consumedTokens = new Set();
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const CONSUMED_TOKENS_FILE = path.join(DATA_DIR, 'consumed_invitations.json');
 
 function initConsumedTokens() {
   try {
-    if (fs.existsSync(CONSUMED_TOKENS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CONSUMED_TOKENS_FILE, 'utf8'));
-      if (Array.isArray(data)) {
-        data.forEach((id) => consumedTokens.add(id));
+    const loadTokens = (filePath) => {
+      if (fs.existsSync(filePath)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          if (Array.isArray(data)) {
+            data.forEach((id) => consumedTokens.add(id));
+          }
+        } catch {
+          // ignore
+        }
       }
+    };
+
+    loadTokens(CONSUMED_TOKENS_FILE);
+    if (CWD_CONSUMED_TOKENS_FILE !== CONSUMED_TOKENS_FILE) {
+      loadTokens(CWD_CONSUMED_TOKENS_FILE);
     }
   } catch {
     // fallback to in-memory set
@@ -186,7 +203,7 @@ export async function createInvitation({ email, invitedByUser, expiresInHours = 
   };
 }
 
-export function verifyInvitationToken(token, expectedEmail = null) {
+export async function verifyInvitationToken(token, expectedEmail = null) {
   const cleaned = cleanInvitationToken(token);
   if (!cleaned) {
     const error = new Error('Invitation token is required.');
@@ -228,6 +245,15 @@ export function verifyInvitationToken(token, expectedEmail = null) {
       error.statusCode = 403;
       error.code = 'INVITATION_EMAIL_MISMATCH';
       throw error;
+    }
+    if (decoded.email) {
+      const existing = await prisma.user.findUnique({ where: { email: decoded.email.trim().toLowerCase() } });
+      if (existing) {
+        const error = new Error('A user with this email address has already been registered.');
+        error.statusCode = 409;
+        error.code = 'USER_ALREADY_EXISTS';
+        throw error;
+      }
     }
     return decoded;
   } catch (err) {
@@ -297,7 +323,7 @@ export async function register({ name, email, password, otp, invitationToken }) 
   const cleanedToken = cleanInvitationToken(invitationToken);
   let invitation = null;
   if (cleanedToken) {
-    invitation = verifyInvitationToken(cleanedToken, normalizedEmail);
+    invitation = await verifyInvitationToken(cleanedToken, normalizedEmail);
   }
 
   // Email verification:

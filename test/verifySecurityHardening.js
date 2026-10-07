@@ -37,7 +37,7 @@ async function runSecurityTests() {
       throw new Error('createInvitation failed to produce expected invitation token.');
     }
 
-    const decoded = verifyInvitationToken(invite.invitationToken, 'invitee@company.com');
+    const decoded = await verifyInvitationToken(invite.invitationToken, 'invitee@company.com');
     if (decoded.email !== 'invitee@company.com') {
       throw new Error('verifyInvitationToken failed to decode token.');
     }
@@ -45,7 +45,7 @@ async function runSecurityTests() {
     // Verify email mismatch is rejected
     let mismatchRejected = false;
     try {
-      verifyInvitationToken(invite.invitationToken, 'intruder@other.com');
+      await verifyInvitationToken(invite.invitationToken, 'intruder@other.com');
     } catch (e) {
       if (e.code === 'INVITATION_EMAIL_MISMATCH') mismatchRejected = true;
     }
