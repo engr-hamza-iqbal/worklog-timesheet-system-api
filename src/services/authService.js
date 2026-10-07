@@ -7,6 +7,7 @@ import prisma from '../config/db.js';
 import { ALLOW_PUBLIC_REGISTRATION, REGISTRATION_ALLOWED_DOMAINS, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getUserActiveCapabilities } from './accessService.js';
 import otpService from './otpService.js';
+import invitationStore from './invitationStore.js';
 
 // Consumed invitation tokens ledger (persisted to disk + in-memory Set)
 const consumedTokens = new Set();
@@ -116,7 +117,7 @@ export function cleanInvitationToken(raw) {
   return trimmed;
 }
 
-export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) {
+export async function createInvitation({ email, invitedByUser, expiresInHours = 72 }) {
   if (!email || !email.trim()) {
     const error = new Error('Email is required for invitation.');
     error.statusCode = 400;
@@ -124,6 +125,29 @@ export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) 
     throw error;
   }
   const normalizedEmail = email.trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(normalizedEmail)) {
+    const error = new Error('A valid email address is required.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  // Disallow generating invitation for an already registered user
+  const existingUser = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+    select: { id: true, name: true, email: true, isActive: true },
+  });
+  if (existingUser) {
+    const error = new Error(`User with email "${normalizedEmail}" is already registered.`);
+    error.statusCode = 409;
+    error.code = 'USER_ALREADY_EXISTS';
+    throw error;
+  }
+
+  // Revoke previous pending invitations for this email so only the newest link is valid
+  invitationStore.revokeByEmail(normalizedEmail, invitedByUser);
+
   const jti = crypto.randomUUID();
   const token = jwt.sign(
     {
@@ -135,11 +159,30 @@ export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) 
     JWT_SECRET,
     { expiresIn: `${expiresInHours}h` }
   );
+
+  const id = `inv_${crypto.randomBytes(8).toString('hex')}`;
+  const expiresAt = new Date(Date.now() + expiresInHours * 3600 * 1000).toISOString();
+  const createdAt = new Date().toISOString();
+
+  invitationStore.addInvitation({
+    id,
+    email: normalizedEmail,
+    token,
+    jti,
+    invitedBy: invitedByUser,
+    expiresInHours,
+    expiresAt,
+    createdAt,
+  });
+
   return {
+    id,
     invitationToken: token,
     email: normalizedEmail,
     expiresInHours,
-    expiresAt: new Date(Date.now() + expiresInHours * 3600 * 1000).toISOString(),
+    expiresAt,
+    createdAt,
+    status: 'PENDING',
   };
 }
 
@@ -149,6 +192,13 @@ export function verifyInvitationToken(token, expectedEmail = null) {
     const error = new Error('Invitation token is required.');
     error.statusCode = 400;
     error.code = 'INVALID_INVITATION';
+    throw error;
+  }
+
+  if (invitationStore.isRevoked(cleaned)) {
+    const error = new Error('This invitation link has been revoked by an administrator and is expired.');
+    error.statusCode = 403;
+    error.code = 'INVITATION_REVOKED';
     throw error;
   }
 
@@ -167,10 +217,10 @@ export function verifyInvitationToken(token, expectedEmail = null) {
       error.code = 'INVALID_INVITATION';
       throw error;
     }
-    if (decoded.jti && consumedTokens.has(decoded.jti)) {
-      const error = new Error('This invitation token has already been used and is expired.');
-      error.statusCode = 400;
-      error.code = 'INVITATION_ALREADY_USED';
+    if (decoded.jti && (consumedTokens.has(decoded.jti) || invitationStore.isRevoked(decoded.jti))) {
+      const error = new Error('This invitation link has been revoked or expired.');
+      error.statusCode = 403;
+      error.code = 'INVITATION_REVOKED';
       throw error;
     }
     if (expectedEmail && decoded.email !== expectedEmail.trim().toLowerCase()) {
@@ -187,6 +237,18 @@ export function verifyInvitationToken(token, expectedEmail = null) {
     error.code = err.name === 'TokenExpiredError' ? 'INVITATION_EXPIRED' : 'INVALID_INVITATION';
     throw error;
   }
+}
+
+export async function getInvitations() {
+  return invitationStore.getAllInvitations(consumedTokens);
+}
+
+export async function revokeInvitation(id, revokingUser) {
+  const revoked = invitationStore.revokeInvitation(id, revokingUser);
+  if (revoked?.token) {
+    consumeInvitationToken(revoked.token);
+  }
+  return revoked;
 }
 
 export async function register({ name, email, password, otp, invitationToken }) {
@@ -311,6 +373,7 @@ export async function register({ name, email, password, otp, invitationToken }) 
   // Permanently consume and expire the invitation token so it can never be used again
   if (cleanedToken) {
     consumeInvitationToken(cleanedToken);
+    invitationStore.markAccepted(cleanedToken);
   }
 
   const token = generateToken(newUser);
@@ -421,6 +484,8 @@ export default {
   isInvitationConsumed,
   consumeInvitationToken,
   clearConsumedInvitations,
+  getInvitations,
+  revokeInvitation,
   register,
   login,
   getCurrentUser,

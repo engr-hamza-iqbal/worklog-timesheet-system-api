@@ -59,12 +59,31 @@ export async function handleLogin(req, res, next) {
 export async function handleCreateInvitation(req, res, next) {
   try {
     const { email, expiresInHours } = req.body;
-    const invitation = authService.createInvitation({
+    const invitation = await authService.createInvitation({
       email,
       invitedByUser: req.user,
       expiresInHours: expiresInHours ? Number(expiresInHours) : 72,
     });
     return sendSuccess(res, invitation, 'Invitation created successfully.', 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleListInvitations(req, res, next) {
+  try {
+    const invitations = await authService.getInvitations();
+    return sendSuccess(res, invitations, 'Invitations retrieved successfully.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleRevokeInvitation(req, res, next) {
+  try {
+    const { id } = req.params;
+    const revoked = await authService.revokeInvitation(id, req.user);
+    return sendSuccess(res, revoked, 'Invitation link has been revoked and expired.', 200);
   } catch (err) {
     next(err);
   }

@@ -32,7 +32,7 @@ async function runSecurityTests() {
     // ── 1. Invitation Token Generation & Verification ──────────────────────────
     console.log('1. Testing Invitation and Domain Verification...');
     const dummyAdmin = { id: 'admin-123', email: 'admin@company.com' };
-    const invite = createInvitation({ email: 'invitee@company.com', invitedByUser: dummyAdmin, expiresInHours: 24 });
+    const invite = await createInvitation({ email: 'invitee@company.com', invitedByUser: dummyAdmin, expiresInHours: 24 });
     if (!invite.invitationToken || invite.email !== 'invitee@company.com') {
       throw new Error('createInvitation failed to produce expected invitation token.');
     }

@@ -115,10 +115,11 @@ async function runOtpTests() {
     console.log('✔ OTP store handles expiration and cleanup.');
 
     // 8. Verify Invitation Token waives OTP and supports full URLs
+    // 8. Verify Invitation Token waives OTP and supports full URLs
     const invitedEmail = `invited-${Date.now()}@example.com`;
-    const inviteObj = authService.createInvitation({
+    const inviteObj = await authService.createInvitation({
       email: invitedEmail,
-      invitedByUser: { id: 'admin-tester-id' },
+      invitedByUser: { id: 'admin-tester-id', name: 'Admin Tester' },
     });
 
     // 8a. Full URL as invitationToken (e.g. pasted directly by user)
@@ -138,7 +139,24 @@ async function runOtpTests() {
     }
     console.log('✔ Invitation registration waives OTP requirement and parses full URL tokens.');
 
-    // 8b. Expire used invitation token - second attempt must be rejected even if 72 hours remain!
+    // 8b. Disallow generating invitation for an already registered user
+    let duplicateInviteBlocked = false;
+    try {
+      await authService.createInvitation({
+        email: invitedEmail,
+        invitedByUser: { id: 'admin-tester-id' },
+      });
+    } catch (err) {
+      if (err.code === 'USER_ALREADY_EXISTS') {
+        duplicateInviteBlocked = true;
+      }
+    }
+    if (!duplicateInviteBlocked) {
+      throw new Error('Expected createInvitation to reject already registered user with USER_ALREADY_EXISTS');
+    }
+    console.log('✔ Admin is blocked from generating invitation for an already registered user (409).');
+
+    // 8c. Expire used invitation token - second attempt must be rejected even if 72 hours remain!
     let consumedErrorCaught = false;
     try {
       authService.verifyInvitationToken(inviteObj.invitationToken);
@@ -165,7 +183,32 @@ async function runOtpTests() {
     }
     console.log('✔ Used invitation token is immediately expired upon registration and blocked from reuse.');
 
-    // 8c. Registration without invitation still strictly requires OTP
+    // 8d. Revocation test: Admin can revoke / mark link expired
+    const revocableEmail = `revocable-${Date.now()}@example.com`;
+    const revocableInvite = await authService.createInvitation({
+      email: revocableEmail,
+      invitedByUser: { id: 'admin-tester-id', name: 'Admin Tester' },
+    });
+
+    const revokedResult = await authService.revokeInvitation(revocableInvite.id, { id: 'admin-tester-id', name: 'Admin Tester' });
+    if (revokedResult.status !== 'REVOKED') {
+      throw new Error('Expected revoked invitation status to be REVOKED');
+    }
+
+    let revokeErrorCaught = false;
+    try {
+      authService.verifyInvitationToken(revocableInvite.invitationToken);
+    } catch (err) {
+      if (err.code === 'INVITATION_REVOKED') {
+        revokeErrorCaught = true;
+      }
+    }
+    if (!revokeErrorCaught) {
+      throw new Error('Expected verifyInvitationToken to reject revoked token with INVITATION_REVOKED');
+    }
+    console.log('✔ Admin can revoke invitation links, immediately invalidating and expiring them.');
+
+    // 8e. Registration without invitation still strictly requires OTP
     const nonInvitedEmail = `public-no-otp-${Date.now()}@example.com`;
     const noOtpRes = await request('/api/auth/register', {
       method: 'POST',

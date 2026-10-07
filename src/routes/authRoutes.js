@@ -4,6 +4,8 @@ import {
   handleRegister,
   handleLogin,
   handleCreateInvitation,
+  handleListInvitations,
+  handleRevokeInvitation,
   handleGetMe,
   handleLogout,
   handleEventStream,
@@ -18,6 +20,8 @@ router.post('/send-otp', createRateLimiter({ key: 'send-otp', windowMs: 15 * 60 
 router.post('/register', createRateLimiter({ key: 'register', windowMs: 15 * 60 * 1000, max: 10 }), handleRegister);
 router.post('/login', createRateLimiter({ key: 'login', windowMs: 15 * 60 * 1000, max: 10 }), handleLogin);
 router.post('/invite', authenticate, requireCapability('MANAGE_USERS'), handleCreateInvitation);
+router.get('/invitations', authenticate, requireCapability('MANAGE_USERS'), handleListInvitations);
+router.post('/invitations/:id/revoke', authenticate, requireCapability('MANAGE_USERS'), handleRevokeInvitation);
 router.get('/me', authenticate, handleGetMe);
 router.get('/stream', authenticate, handleEventStream);
 router.post('/logout', authenticate, handleLogout);
