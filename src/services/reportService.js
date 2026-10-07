@@ -270,3 +270,269 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
 
   return { date: checkDate, sentCount: sent.length, skippedCount: skipped.length, sent, skipped };
 }
+
+export async function getWhoIsAway(targetDate, actorUser) {
+  const checkDate = date(targetDate, new Date().toISOString().slice(0, 10));
+  const reportScope = await getReportScope(actorUser);
+  const scopeFilter = reportScope
+    ? reportScope.allowedUserIds.length
+      ? Prisma.sql`AND tod."userId" IN (${Prisma.join(reportScope.allowedUserIds)})`
+      : Prisma.sql`AND FALSE`
+    : Prisma.empty;
+
+  const awayUsers = await prisma.$queryRaw(Prisma.sql`
+    SELECT 
+      u."id" AS "userId",
+      u."name" AS "userName",
+      u."email" AS "userEmail",
+      tot."name" AS "timeOffType",
+      tor."id" AS "requestId",
+      tor."startDate"::text AS "startDate",
+      tor."endDate"::text AS "endDate",
+      tor."reason" AS "reason",
+      tod."status" AS "status"
+    FROM "TimeOffDay" tod
+    JOIN "User" u ON u."id" = tod."userId"
+    JOIN "TimeOffRequest" tor ON tor."id" = tod."timeOffRequestId"
+    JOIN "TimeOffType" tot ON tot."id" = tor."timeOffTypeId"
+    WHERE tod."date" = ${checkDate}::date
+      AND tod."status" IN ('APPROVED', 'PENDING')
+      ${scopeFilter}
+    ORDER BY tod."status" ASC, u."name" ASC
+  `);
+
+  return {
+    date: checkDate,
+    awayUsers,
+    totalAway: awayUsers.filter((u) => u.status === 'APPROVED').length,
+    totalPending: awayUsers.filter((u) => u.status === 'PENDING').length,
+  };
+}
+
+export async function getReviewQueueByReviewer(actorUser) {
+  await getReportScope(actorUser);
+
+  const pendingEntries = await prisma.timeEntry.findMany({
+    where: { status: 'SUBMITTED', deletedAt: null },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+      project: { select: { id: true, name: true, client: { select: { id: true, name: true } } } },
+    },
+    orderBy: { workDate: 'asc' },
+  });
+
+  const now = new Date();
+  const [admins, reviewersWithGrants] = await Promise.all([
+    prisma.user.findMany({
+      where: { accountType: 'ADMIN', isActive: true },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.capabilityGrant.findMany({
+      where: {
+        capability: { code: 'REVIEW_TIME' },
+        revokedAt: null,
+        user: { isActive: true },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        scopes: true,
+      },
+    }),
+  ]);
+
+  const reviewerMap = new Map();
+  for (const admin of admins) {
+    reviewerMap.set(admin.id, {
+      reviewer: admin,
+      isAdmin: true,
+      isGlobal: true,
+      allowedUserIds: [],
+      allowedProjectIds: [],
+    });
+  }
+
+  for (const grant of reviewersWithGrants) {
+    const existing = reviewerMap.get(grant.userId) || {
+      reviewer: grant.user,
+      isAdmin: false,
+      isGlobal: false,
+      allowedUserIds: [],
+      allowedProjectIds: [],
+    };
+    if (grant.scopes.length === 0) {
+      existing.isGlobal = true;
+    } else {
+      for (const scope of grant.scopes) {
+        if (scope.scopeType === 'USER' && scope.targetUserId) {
+          existing.allowedUserIds.push(scope.targetUserId);
+        }
+        if (scope.scopeType === 'PROJECT' && scope.targetProjectId) {
+          existing.allowedProjectIds.push(scope.targetProjectId);
+        }
+      }
+    }
+    reviewerMap.set(grant.userId, existing);
+  }
+
+  const result = [];
+  for (const [reviewerId, config] of reviewerMap.entries()) {
+    const eligibleEntries = pendingEntries.filter((entry) => {
+      if (entry.userId === reviewerId) return false;
+      if (config.isAdmin || config.isGlobal) return true;
+      return (
+        config.allowedUserIds.includes(entry.userId) ||
+        config.allowedProjectIds.includes(entry.projectId)
+      );
+    });
+
+    const totalMinutes = eligibleEntries.reduce((acc, e) => acc + e.durationMinutes, 0);
+
+    result.push({
+      reviewerId,
+      reviewerName: config.reviewer.name,
+      reviewerEmail: config.reviewer.email,
+      role: config.isAdmin ? 'ADMIN' : 'REVIEWER',
+      scopeType: config.isGlobal ? 'GLOBAL' : 'SCOPED',
+      waitingEntryCount: eligibleEntries.length,
+      waitingHours: Math.round((totalMinutes / 60) * 100) / 100,
+      entries: eligibleEntries.map((e) => ({
+        id: e.id,
+        userName: e.user.name,
+        userEmail: e.user.email,
+        projectName: e.project.name,
+        clientName: e.project.client?.name || '',
+        workDate: e.workDate.toISOString().slice(0, 10),
+        hours: Math.round((e.durationMinutes / 60) * 100) / 100,
+        description: e.description,
+      })),
+    });
+  }
+
+  result.sort((a, b) => b.waitingEntryCount - a.waitingEntryCount || a.reviewerName.localeCompare(b.reviewerName));
+
+  return {
+    totalPendingEntries: pendingEntries.length,
+    reviewers: result,
+  };
+}
+
+export async function getEmployeeTimeTrend(filters = {}, actorUser = null) {
+  const { startDate, endDate } = range(filters);
+  const period = filters.period === 'month' ? 'month' : 'week';
+  const targetUserId = filters.userId || null;
+  const reportScope = await getReportScope(actorUser);
+
+  if (targetUserId && reportScope && !reportScope.allowedUserIds.includes(targetUserId)) {
+    throw Object.assign(new Error('Selected employee is outside your report scope.'), { status: 403 });
+  }
+
+  const scopeFilter = reportScope
+    ? reportScope.allowedUserIds.length
+      ? Prisma.sql`AND te."userId" IN (${Prisma.join(reportScope.allowedUserIds)})`
+      : Prisma.sql`AND FALSE`
+    : Prisma.empty;
+
+  const userFilter = targetUserId
+    ? Prisma.sql`AND te."userId" = ${targetUserId}`
+    : Prisma.empty;
+
+  const dateTruncSql = period === 'month'
+    ? Prisma.sql`DATE_TRUNC('month', te."workDate")`
+    : Prisma.sql`DATE_TRUNC('week', te."workDate")`;
+
+  const trendData = await prisma.$queryRaw(Prisma.sql`
+    SELECT 
+      TO_CHAR(${dateTruncSql}, 'YYYY-MM-DD') AS "periodDate",
+      u."id" AS "userId",
+      u."name" AS "userName",
+      COALESCE(SUM(te."durationMinutes"), 0)::int AS "minutes",
+      ROUND(COALESCE(SUM(te."durationMinutes"), 0) / 60.0, 2) AS "hours"
+    FROM "TimeEntry" te
+    JOIN "User" u ON u."id" = te."userId"
+    WHERE te."status" = 'APPROVED'
+      AND te."deletedAt" IS NULL
+      AND te."workDate" >= ${startDate}::date
+      AND te."workDate" <= ${endDate}::date
+      ${userFilter}
+      ${scopeFilter}
+    GROUP BY ${dateTruncSql}, u."id", u."name"
+    ORDER BY "periodDate" ASC, u."name" ASC
+  `);
+
+  return {
+    period,
+    startDate,
+    endDate,
+    trend: trendData,
+  };
+}
+
+export async function getEmployeeProjectBreakdown(filters = {}, actorUser = null) {
+  const { startDate, endDate } = range(filters);
+  const targetUserId = filters.userId;
+  if (!targetUserId) {
+    throw Object.assign(new Error('User ID is required for employee project breakdown.'), { status: 400 });
+  }
+
+  const reportScope = await getReportScope(actorUser);
+  if (reportScope && !reportScope.allowedUserIds.includes(targetUserId)) {
+    throw Object.assign(new Error('Selected employee is outside your report scope.'), { status: 403 });
+  }
+
+  let canViewBilling = true;
+  if (actorUser && actorUser.accountType !== 'ADMIN') {
+    const caps = await getUserActiveCapabilities(actorUser);
+    canViewBilling = caps['VIEW_BILLING']?.isGlobal === true;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, name: true, email: true },
+  });
+  if (!user) {
+    throw Object.assign(new Error('User not found.'), { status: 404 });
+  }
+
+  const breakdown = await prisma.$queryRaw(Prisma.sql`
+    SELECT 
+      p."id" AS "projectId",
+      p."name" AS "projectName",
+      c."name" AS "clientName",
+      COALESCE(SUM(te."durationMinutes"), 0)::int AS "minutes",
+      ROUND(COALESCE(SUM(te."durationMinutes"), 0) / 60.0, 2) AS "hours",
+      ROUND(COALESCE(SUM(te."durationMinutes" * te."approvedRateSnapshot"), 0) / 60.0, 2) AS "billableValue"
+    FROM "TimeEntry" te
+    JOIN "Project" p ON p."id" = te."projectId"
+    JOIN "Client" c ON c."id" = p."clientId"
+    WHERE te."status" = 'APPROVED'
+      AND te."deletedAt" IS NULL
+      AND te."userId" = ${targetUserId}
+      AND te."workDate" >= ${startDate}::date
+      AND te."workDate" <= ${endDate}::date
+    GROUP BY p."id", p."name", c."name"
+    ORDER BY "hours" DESC
+  `);
+
+  const totalMinutes = breakdown.reduce((sum, item) => sum + item.minutes, 0);
+
+  const formatted = breakdown.map((item) => ({
+    projectId: item.projectId,
+    projectName: item.projectName,
+    clientName: item.clientName,
+    minutes: item.minutes,
+    hours: item.hours,
+    percentage: totalMinutes > 0 ? Math.round((item.minutes / totalMinutes) * 1000) / 10 : 0,
+    billableValue: canViewBilling ? item.billableValue : undefined,
+  }));
+
+  return {
+    user,
+    startDate,
+    endDate,
+    totalHours: Math.round((totalMinutes / 60) * 100) / 100,
+    projects: formatted,
+  };
+}
+

@@ -11,6 +11,7 @@ const testFiles = [
   'verifyHistoryFlow.js',
   'verifySecurityHardening.js',
   'verifyOtpAndPassStrength.js',
+  'verifyBusinessRulesAndIntegrations.js',
 ];
 
 for (const testFile of testFiles) {

@@ -20,6 +20,7 @@
     "test:expiry": "node test/verifyExpiryFlow.js",
     "test:history": "node test/verifyHistoryFlow.js",
     "test:security": "node test/verifySecurityHardening.js",
+    "test:business-rules": "node test/verifyBusinessRulesAndIntegrations.js",
     "test": "node test/runAll.js",
     "clean:rate-periods": "node scripts/cleanRatePeriods.js"
   },
