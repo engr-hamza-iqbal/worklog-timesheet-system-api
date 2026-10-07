@@ -1,9 +1,80 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
 import { ALLOW_PUBLIC_REGISTRATION, REGISTRATION_ALLOWED_DOMAINS, JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getUserActiveCapabilities } from './accessService.js';
 import otpService from './otpService.js';
+
+// Consumed invitation tokens ledger (persisted to disk + in-memory Set)
+const consumedTokens = new Set();
+const DATA_DIR = path.resolve(process.cwd(), 'data');
+const CONSUMED_TOKENS_FILE = path.join(DATA_DIR, 'consumed_invitations.json');
+
+function initConsumedTokens() {
+  try {
+    if (fs.existsSync(CONSUMED_TOKENS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CONSUMED_TOKENS_FILE, 'utf8'));
+      if (Array.isArray(data)) {
+        data.forEach((id) => consumedTokens.add(id));
+      }
+    }
+  } catch {
+    // fallback to in-memory set
+  }
+}
+initConsumedTokens();
+
+export function isInvitationConsumed(rawToken) {
+  const token = cleanInvitationToken(rawToken);
+  if (!token) return false;
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  if (consumedTokens.has(hash)) return true;
+  try {
+    const decoded = jwt.decode(token);
+    if (decoded?.jti && consumedTokens.has(decoded.jti)) return true;
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+export function consumeInvitationToken(rawToken) {
+  const token = cleanInvitationToken(rawToken);
+  if (!token) return;
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  consumedTokens.add(hash);
+  try {
+    const decoded = jwt.decode(token);
+    if (decoded?.jti) {
+      consumedTokens.add(decoded.jti);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(CONSUMED_TOKENS_FILE, JSON.stringify([...consumedTokens]), 'utf8');
+  } catch {
+    // ignore filesystem write errors, memory set is active
+  }
+}
+
+export function clearConsumedInvitations() {
+  consumedTokens.clear();
+  try {
+    if (fs.existsSync(CONSUMED_TOKENS_FILE)) {
+      fs.unlinkSync(CONSUMED_TOKENS_FILE);
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export function generateToken(user) {
   return jwt.sign(
@@ -53,11 +124,13 @@ export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) 
     throw error;
   }
   const normalizedEmail = email.trim().toLowerCase();
+  const jti = crypto.randomUUID();
   const token = jwt.sign(
     {
       email: normalizedEmail,
       invitedBy: invitedByUser.id,
       purpose: 'REGISTRATION_INVITATION',
+      jti,
     },
     JWT_SECRET,
     { expiresIn: `${expiresInHours}h` }
@@ -78,12 +151,26 @@ export function verifyInvitationToken(token, expectedEmail = null) {
     error.code = 'INVALID_INVITATION';
     throw error;
   }
+
+  if (isInvitationConsumed(cleaned)) {
+    const error = new Error('This invitation token has already been used and is expired.');
+    error.statusCode = 400;
+    error.code = 'INVITATION_ALREADY_USED';
+    throw error;
+  }
+
   try {
     const decoded = jwt.verify(cleaned, JWT_SECRET);
     if (decoded.purpose !== 'REGISTRATION_INVITATION') {
       const error = new Error('Invalid invitation token.');
       error.statusCode = 400;
       error.code = 'INVALID_INVITATION';
+      throw error;
+    }
+    if (decoded.jti && consumedTokens.has(decoded.jti)) {
+      const error = new Error('This invitation token has already been used and is expired.');
+      error.statusCode = 400;
+      error.code = 'INVITATION_ALREADY_USED';
       throw error;
     }
     if (expectedEmail && decoded.email !== expectedEmail.trim().toLowerCase()) {
@@ -189,7 +276,10 @@ export async function register({ name, email, password, otp, invitationToken }) 
   });
 
   if (existingUser) {
-    const error = new Error('An account with this email address already exists.');
+    if (cleanedToken) {
+      consumeInvitationToken(cleanedToken);
+    }
+    const error = new Error('An account with this email address already exists. The invitation is no longer valid.');
     error.statusCode = 409;
     error.code = 'EMAIL_ALREADY_EXISTS';
     throw error;
@@ -217,6 +307,11 @@ export async function register({ name, email, password, otp, invitationToken }) 
       createdAt: true,
     },
   });
+
+  // Permanently consume and expire the invitation token so it can never be used again
+  if (cleanedToken) {
+    consumeInvitationToken(cleanedToken);
+  }
 
   const token = generateToken(newUser);
   const capabilities = await getUserActiveCapabilities(newUser);
@@ -320,8 +415,12 @@ export async function getCurrentUser(userId) {
 
 export default {
   generateToken,
+  cleanInvitationToken,
   createInvitation,
   verifyInvitationToken,
+  isInvitationConsumed,
+  consumeInvitationToken,
+  clearConsumedInvitations,
   register,
   login,
   getCurrentUser,

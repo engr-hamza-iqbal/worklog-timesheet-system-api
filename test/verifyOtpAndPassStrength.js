@@ -138,7 +138,34 @@ async function runOtpTests() {
     }
     console.log('✔ Invitation registration waives OTP requirement and parses full URL tokens.');
 
-    // 8b. Registration without invitation still strictly requires OTP
+    // 8b. Expire used invitation token - second attempt must be rejected even if 72 hours remain!
+    let consumedErrorCaught = false;
+    try {
+      authService.verifyInvitationToken(inviteObj.invitationToken);
+    } catch (err) {
+      if (err.code === 'INVITATION_ALREADY_USED') {
+        consumedErrorCaught = true;
+      }
+    }
+    if (!consumedErrorCaught) {
+      throw new Error('Expected verifyInvitationToken to reject consumed token with INVITATION_ALREADY_USED');
+    }
+
+    const reuseInviteRes = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Reused Invite',
+        email: invitedEmail,
+        password: 'Password123!',
+        invitationToken: fullUrlToken,
+      }),
+    });
+    if (reuseInviteRes.status !== 400 && reuseInviteRes.status !== 409) {
+      throw new Error(`Expected used invitation to be rejected, got ${reuseInviteRes.status}`);
+    }
+    console.log('✔ Used invitation token is immediately expired upon registration and blocked from reuse.');
+
+    // 8c. Registration without invitation still strictly requires OTP
     const nonInvitedEmail = `public-no-otp-${Date.now()}@example.com`;
     const noOtpRes = await request('/api/auth/register', {
       method: 'POST',
