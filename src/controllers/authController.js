@@ -14,11 +14,25 @@ function setAuthCookies(res, token) {
   return csrfToken;
 }
 
+function ensureCsrfCookie(req, res) {
+  const cookieHeader = req.headers.cookie || '';
+  const csrfCookieMatch = cookieHeader.match(/(?:^|;\s*)worklog_csrf_token=([^;]+)/);
+  if (csrfCookieMatch) {
+    return decodeURIComponent(csrfCookieMatch[1]);
+  }
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const sameSite = process.env.NODE_ENV === 'production' ? 'None' : 'Lax';
+  const csrfToken = crypto.randomBytes(32).toString('hex');
+  const csrfCookie = `worklog_csrf_token=${encodeURIComponent(csrfToken)}; Path=/; Max-Age=86400; SameSite=${sameSite}${secure}`;
+  res.setHeader('Set-Cookie', [csrfCookie]);
+  return csrfToken;
+}
+
 function clearAuthCookies(res) {
   const sameSite = process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax';
   res.setHeader('Set-Cookie', [
-    `worklog_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}`,
-    `worklog_csrf_token=; Path=/; Max-Age=0; SameSite=${sameSite}`,
+    `worklog_session=; HttpOnly; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}`,
+    `worklog_csrf_token=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}`,
   ]);
 }
 
@@ -114,6 +128,7 @@ export async function handleRevokeInvitation(req, res, next) {
 export async function handleGetMe(req, res, next) {
   try {
     const result = await authService.getCurrentUser(req.user.id);
+    result.csrfToken = ensureCsrfCookie(req, res);
     return sendSuccess(res, result, 'User profile and capabilities retrieved.', 200);
   } catch (err) {
     next(err);

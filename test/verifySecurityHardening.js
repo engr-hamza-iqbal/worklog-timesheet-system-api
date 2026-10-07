@@ -16,12 +16,13 @@ async function runSecurityTests() {
   const baseUrl = `http://localhost:${port}`;
 
   async function request(path, options = {}) {
+    const { headers = {}, ...rest } = options;
     const res = await fetch(`${baseUrl}${path}`, {
+      ...rest,
       headers: {
         'Content-Type': 'application/json',
-        ...(options.headers || {}),
+        ...headers,
       },
-      ...options,
     });
     const body = await res.json().catch(() => null);
     const setCookie = res.headers.get('set-cookie');
@@ -77,11 +78,12 @@ async function runSecurityTests() {
     }
 
     // A: Cookie-authenticated mutation without CSRF token header must be rejected (403 CSRF_REJECTED)
-    const rejectNoCsrf = await request('/api/auth/logout', {
+    const rejectNoCsrf = await request('/api/auth/invite', {
       method: 'POST',
       headers: {
         Cookie: `worklog_session=${sessionCookie}; worklog_csrf_token=${csrfCookie}`,
       },
+      body: JSON.stringify({ email: `test-csrf-${Date.now()}@worklog.local` }),
     });
     if (rejectNoCsrf.status !== 403 || rejectNoCsrf.body?.error?.code !== 'CSRF_REJECTED') {
       throw new Error(`Expected 403 CSRF_REJECTED without X-CSRF-Token header, got ${rejectNoCsrf.status}`);
@@ -89,12 +91,13 @@ async function runSecurityTests() {
     console.log('  ✔ Mutation with session cookie but missing X-CSRF-Token is blocked with 403 CSRF_REJECTED.');
 
     // B: Cookie-authenticated mutation with invalid CSRF token header must be rejected (403 CSRF_REJECTED)
-    const rejectBadCsrf = await request('/api/auth/logout', {
+    const rejectBadCsrf = await request('/api/auth/invite', {
       method: 'POST',
       headers: {
         Cookie: `worklog_session=${sessionCookie}; worklog_csrf_token=${csrfCookie}`,
         'X-CSRF-Token': 'forged_or_invalid_token',
       },
+      body: JSON.stringify({ email: `test-csrf-${Date.now()}@worklog.local` }),
     });
     if (rejectBadCsrf.status !== 403 || rejectBadCsrf.body?.error?.code !== 'CSRF_REJECTED') {
       throw new Error(`Expected 403 CSRF_REJECTED with mismatching X-CSRF-Token, got ${rejectBadCsrf.status}`);
@@ -102,17 +105,30 @@ async function runSecurityTests() {
     console.log('  ✔ Mutation with mismatching X-CSRF-Token is blocked with 403 CSRF_REJECTED.');
 
     // C: Cookie-authenticated mutation with matching X-CSRF-Token must succeed
-    const allowValidCsrf = await request('/api/auth/logout', {
+    const allowValidCsrf = await request('/api/auth/invite', {
       method: 'POST',
       headers: {
         Cookie: `worklog_session=${sessionCookie}; worklog_csrf_token=${csrfCookie}`,
         'X-CSRF-Token': csrfCookie,
       },
+      body: JSON.stringify({ email: `test-csrf-${Date.now()}@worklog.local` }),
     });
-    if (allowValidCsrf.status !== 200 || !allowValidCsrf.body?.data?.loggedOut) {
-      throw new Error(`Expected 200 with valid X-CSRF-Token, got ${allowValidCsrf.status}`);
+    if (allowValidCsrf.status !== 201) {
+      throw new Error(`Expected 201 with valid X-CSRF-Token, got ${allowValidCsrf.status}: ${JSON.stringify(allowValidCsrf.body)}`);
     }
     console.log('  ✔ Mutation with valid double-submit X-CSRF-Token succeeds.');
+
+    // D: Logout succeeds gracefully and clears cookies without CSRF obstruction
+    const allowLogout = await request('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        Cookie: `worklog_session=${sessionCookie}; worklog_csrf_token=${csrfCookie}`,
+      },
+    });
+    if (allowLogout.status !== 200 || !allowLogout.body?.data?.loggedOut) {
+      throw new Error(`Expected 200 for logout, got ${allowLogout.status}`);
+    }
+    console.log('  ✔ Logout succeeds cleanly and clears session cookies.');
 
     // D: Bearer token clients without session cookie are not subject to browser CSRF
     const apiBearer = loginRes.body.data.token;

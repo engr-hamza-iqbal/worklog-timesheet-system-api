@@ -26,6 +26,6 @@ router.get('/invitations', authenticate, requireCapability('MANAGE_USERS'), hand
 router.post('/invitations/:id/revoke', authenticate, requireCapability('MANAGE_USERS'), handleRevokeInvitation);
 router.get('/me', authenticate, handleGetMe);
 router.get('/stream', authenticate, handleEventStream);
-router.post('/logout', authenticate, handleLogout);
+router.post('/logout', handleLogout);
 
 export default router;

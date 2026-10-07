@@ -64,7 +64,9 @@ app.use((req, res, next) => {
   const hasSessionCookie = /(?:^|;\s*)worklog_session=/.test(cookieHeader);
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
 
-  if (hasSessionCookie && isMutation) {
+  const isLogout = req.path === '/api/auth/logout' || req.originalUrl?.startsWith('/api/auth/logout');
+
+  if (hasSessionCookie && isMutation && !isLogout) {
     const csrfCookieMatch = cookieHeader.match(/(?:^|;\s*)worklog_csrf_token=([^;]+)/);
     const csrfCookie = csrfCookieMatch ? decodeURIComponent(csrfCookieMatch[1]) : null;
     const csrfHeader = req.headers['x-csrf-token'];
