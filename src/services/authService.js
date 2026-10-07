@@ -17,6 +17,34 @@ export function generateToken(user) {
   );
 }
 
+export function cleanInvitationToken(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (
+    trimmed.includes('invite=') ||
+    trimmed.includes('token=') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('?')
+  ) {
+    try {
+      const parsedUrl = new URL(trimmed, 'http://localhost');
+      const param = parsedUrl.searchParams.get('invite') || parsedUrl.searchParams.get('token');
+      if (param) return param.trim();
+      if (parsedUrl.hash) {
+        const hashMatch = parsedUrl.hash.match(/[#?&](?:invite|token)=([^&#\s]+)/);
+        if (hashMatch) return decodeURIComponent(hashMatch[1]).trim();
+      }
+    } catch {
+      // fallback regex below
+    }
+    const match = trimmed.match(/[?&#](?:invite|token)=([^&#\s]+)/);
+    if (match) return decodeURIComponent(match[1]).trim();
+  }
+  return trimmed;
+}
+
 export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) {
   if (!email || !email.trim()) {
     const error = new Error('Email is required for invitation.');
@@ -43,14 +71,15 @@ export function createInvitation({ email, invitedByUser, expiresInHours = 72 }) 
 }
 
 export function verifyInvitationToken(token, expectedEmail = null) {
-  if (!token) {
+  const cleaned = cleanInvitationToken(token);
+  if (!cleaned) {
     const error = new Error('Invitation token is required.');
     error.statusCode = 400;
     error.code = 'INVALID_INVITATION';
     throw error;
   }
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(cleaned, JWT_SECRET);
     if (decoded.purpose !== 'REGISTRATION_INVITATION') {
       const error = new Error('Invalid invitation token.');
       error.statusCode = 400;
@@ -113,21 +142,27 @@ export async function register({ name, email, password, otp, invitationToken }) 
     throw error;
   }
 
-  // Verify and consume the 10-minute email verification OTP
-  if (!otp) {
-    const error = new Error('Email verification code is required.');
-    error.statusCode = 400;
-    error.code = 'OTP_REQUIRED';
-    throw error;
-  }
-  otpService.consumeOtp(normalizedEmail, otp);
-
   const userCount = await prisma.user.count();
   const isFirstUser = userCount === 0;
 
+  const cleanedToken = cleanInvitationToken(invitationToken);
   let invitation = null;
-  if (invitationToken) {
-    invitation = verifyInvitationToken(invitationToken, normalizedEmail);
+  if (cleanedToken) {
+    invitation = verifyInvitationToken(cleanedToken, normalizedEmail);
+  }
+
+  // Email verification:
+  // If the user has a valid invitation from an admin, or is the first user,
+  // email verification via OTP code is waived because the email was already authenticated.
+  // Otherwise, public self-registration requires the 10-minute OTP code.
+  if (!invitation && !isFirstUser) {
+    if (!otp) {
+      const error = new Error('Email verification code is required.');
+      error.statusCode = 400;
+      error.code = 'OTP_REQUIRED';
+      throw error;
+    }
+    otpService.consumeOtp(normalizedEmail, otp);
   }
 
   if (!isFirstUser && !invitation) {

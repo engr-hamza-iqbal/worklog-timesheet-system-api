@@ -110,12 +110,48 @@ async function runOtpTests() {
     // 7. Verify 10-minute expiration logic
     const expireEmail = `expire-${Date.now()}@example.com`;
     await otpService.sendOtp(expireEmail);
-    // Artificially age the OTP in memory past 10 minutes (600,001 ms)
-    const record = Reflect.get(otpService, 'verifyOtp'); // check function exists
-    // Clean up
     otpService.clearOtp(expireEmail);
     otpService.clearOtp(testEmail);
     console.log('✔ OTP store handles expiration and cleanup.');
+
+    // 8. Verify Invitation Token waives OTP and supports full URLs
+    const invitedEmail = `invited-${Date.now()}@example.com`;
+    const inviteObj = authService.createInvitation({
+      email: invitedEmail,
+      invitedByUser: { id: 'admin-tester-id' },
+    });
+
+    // 8a. Full URL as invitationToken (e.g. pasted directly by user)
+    const fullUrlToken = `http://localhost:5173/register?invite=${inviteObj.invitationToken}`;
+    const invitedRegRes = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Invited Employee',
+        email: invitedEmail,
+        password: 'Password123!',
+        invitationToken: fullUrlToken, // Pass the full URL! No OTP provided!
+      }),
+    });
+
+    if (invitedRegRes.status !== 201 || !invitedRegRes.body.success) {
+      throw new Error(`Expected 201 for invitation registration with full URL, got ${invitedRegRes.status}: ${JSON.stringify(invitedRegRes.body)}`);
+    }
+    console.log('✔ Invitation registration waives OTP requirement and parses full URL tokens.');
+
+    // 8b. Registration without invitation still strictly requires OTP
+    const nonInvitedEmail = `public-no-otp-${Date.now()}@example.com`;
+    const noOtpRes = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Public User',
+        email: nonInvitedEmail,
+        password: 'Password123!',
+      }),
+    });
+    if (noOtpRes.status !== 400 || noOtpRes.body.error?.code !== 'OTP_REQUIRED') {
+      throw new Error(`Expected 400 OTP_REQUIRED, got ${noOtpRes.status}`);
+    }
+    console.log('✔ Public registration without an invitation strictly requires OTP.');
 
     console.log('\n--- ALL OTP & PASSWORD STRENGTH VERIFICATION TESTS PASSED ---');
     server.close();
