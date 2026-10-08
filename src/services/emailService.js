@@ -11,7 +11,54 @@ import {
   SMTP_SECURE,
 } from '../config/env.js';
 
-let transporter = null;
+export async function sendEmailWithFallback({ to, subject, html }) {
+  if (!SMTP_USER || !SMTP_PASS) {
+    if (NODE_ENV !== 'production' || NODE_ENV === 'test') {
+      const devTransporter = nodemailer.createTransport({ jsonTransport: true });
+      return devTransporter.sendMail({ from: EMAIL_FROM, to, subject, html });
+    }
+    throw new Error('SMTP credentials are required in production.');
+  }
+
+  const primaryPort = Number(SMTP_PORT) || 587;
+  const primarySecure = SMTP_SECURE !== undefined ? SMTP_SECURE : primaryPort === 465;
+  const fallbackPort = primaryPort === 465 ? 587 : 465;
+  const fallbackSecure = fallbackPort === 465;
+
+  const createTransport = (port, secure) =>
+    nodemailer.createTransport({
+      host: SMTP_HOST || 'smtp.gmail.com',
+      port,
+      secure,
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS,
+      },
+      family: 4, // Critical for Render/Docker: forces IPv4 to avoid connect ENETUNREACH
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
+    });
+
+  try {
+    const primaryTransport = createTransport(primaryPort, primarySecure);
+    const mailPromise = primaryTransport.sendMail({ from: EMAIL_FROM, to, subject, html });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Primary SMTP (${primaryPort}) timed out after 8000ms`)), 8000)
+    );
+    return await Promise.race([mailPromise, timeoutPromise]);
+  } catch (primaryErr) {
+    console.warn(
+      `Primary SMTP dispatch on port ${primaryPort} failed (${primaryErr.message}). Attempting fallback port ${fallbackPort}...`
+    );
+    const fallbackTransport = createTransport(fallbackPort, fallbackSecure);
+    const mailPromise = fallbackTransport.sendMail({ from: EMAIL_FROM, to, subject, html });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Fallback SMTP (${fallbackPort}) timed out after 8000ms`)), 8000)
+    );
+    return await Promise.race([mailPromise, timeoutPromise]);
+  }
+}
 
 function getTransporter() {
   if (transporter) return transporter;
@@ -19,27 +66,21 @@ function getTransporter() {
   if (SMTP_USER && SMTP_PASS) {
     transporter = nodemailer.createTransport({
       host: SMTP_HOST || 'smtp.gmail.com',
-      port: SMTP_PORT || 465,
+      port: SMTP_PORT || 587,
       secure: SMTP_SECURE,
       auth: {
         user: SMTP_USER,
         pass: SMTP_PASS,
       },
+      family: 4,
       connectionTimeout: 8000,
       greetingTimeout: 8000,
       socketTimeout: 10000,
     });
-  } else if (NODE_ENV === 'test') {
-    transporter = nodemailer.createTransport({
-      jsonTransport: true,
-    });
-  } else if (NODE_ENV === 'development') {
-    // In dev without credentials, use jsonTransport so actions never fail and attempts are safely recorded
-    transporter = nodemailer.createTransport({
-      jsonTransport: true,
-    });
   } else {
-    throw new Error('SMTP credentials are required outside development and test environments.');
+    transporter = nodemailer.createTransport({
+      jsonTransport: true,
+    });
   }
   return transporter;
 }
@@ -217,18 +258,11 @@ export function queueEmail({
         });
       if (!log) return;
 
-      const mailClient = getTransporter();
-
-      const mailPromise = mailClient.sendMail({
-        from: EMAIL_FROM,
+      await sendEmailWithFallback({
         to: recipientEmail,
         subject,
         html,
       });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Email dispatch timed out after 10000ms')), 10000)
-      );
-      await Promise.race([mailPromise, timeoutPromise]);
 
       await prisma.emailLog.update({
         where: { id: log.id },

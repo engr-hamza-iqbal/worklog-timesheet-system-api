@@ -11,6 +11,7 @@ import {
   SMTP_PASS,
   SMTP_SECURE,
 } from '../config/env.js';
+import { sendEmailWithFallback } from './emailService.js';
 
 // In-memory store for active OTP verification records
 // Key: normalizedEmail -> Value: { code, expiresAt, attempts, lastSentAt }
@@ -159,20 +160,13 @@ export async function sendOtp(email) {
   const html = buildOtpEmailHtml({ code, expiresInMinutes });
 
   try {
-    const client = getTransporter();
-    const mailPromise = client.sendMail({
-      from: EMAIL_FROM,
+    await sendEmailWithFallback({
       to: normalizedEmail,
       subject,
       html,
     });
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP dispatch timed out after 10000ms')), 10000)
-    );
-    await Promise.race([mailPromise, timeoutPromise]);
   } catch (err) {
     console.error('Failed to send OTP email via SMTP:', err.message);
-    transporter = null;
     // Don't fail the request in dev/test if SMTP has issues
     if (NODE_ENV === 'production') {
       const error = new Error('Failed to deliver verification code. Please try again later.');
@@ -375,20 +369,13 @@ export async function sendPasswordResetOtp(email) {
   const html = buildPasswordResetEmailHtml({ code, expiresInMinutes });
 
   try {
-    const client = getTransporter();
-    const mailPromise = client.sendMail({
-      from: EMAIL_FROM,
+    await sendEmailWithFallback({
       to: normalizedEmail,
       subject,
       html,
     });
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP dispatch timed out after 10000ms')), 10000)
-    );
-    await Promise.race([mailPromise, timeoutPromise]);
   } catch (err) {
     console.error('Failed to send password reset OTP email via SMTP:', err.message);
-    transporter = null;
     if (NODE_ENV === 'production') {
       const error = new Error('Failed to deliver password reset code. Please try again later.');
       error.statusCode = 500;

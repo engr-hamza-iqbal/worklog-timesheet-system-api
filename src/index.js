@@ -1,3 +1,11 @@
+import dns from 'node:dns';
+
+// Render and Docker containers frequently lack outbound IPv6 routing.
+// Prioritizing IPv4 prevents ENETUNREACH errors when resolving Gmail SMTP and external hosts.
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import app from './app.js';
 import { PORT } from './config/env.js';
 

@@ -24,7 +24,7 @@ if (NODE_ENV === 'production' && (!FRONTEND_URL || !CORS_ORIGIN || CORS_ORIGIN =
   throw new Error('FRONTEND_URL and a production CORS_ORIGIN must be configured without localhost or wildcard origins.');
 }
 export const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
-export const SMTP_PORT = Number(process.env.SMTP_PORT) || 465;
+export const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 export const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER || null;
 export const SMTP_PASS = (process.env.SMTP_PASS || process.env.APP_PASSWORD || '').replace(/\s+/g, '') || null;
 if (NODE_ENV === 'production' && (!SMTP_USER || !SMTP_PASS)) {
