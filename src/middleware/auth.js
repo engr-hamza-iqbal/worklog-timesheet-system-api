@@ -4,19 +4,6 @@ import { JWT_SECRET } from '../config/env.js';
 import { sendError } from '../utils/response.js';
 import { notifyUserAccessChanged } from '../utils/eventStream.js';
 
-const revokedTokens = new Set();
-
-export function revokeToken(token) {
-  if (token && typeof token === 'string') {
-    revokedTokens.add(token.trim());
-  }
-}
-
-export function isTokenRevoked(token) {
-  if (!token || typeof token !== 'string') return false;
-  return revokedTokens.has(token.trim());
-}
-
 export function bustUserCache(userId) {
   notifyUserAccessChanged(userId, { type: 'CAPABILITIES_CHANGED', userId });
 }
@@ -32,10 +19,6 @@ export async function authenticate(req, res, next) {
 
   if (!token) {
     return sendError(res, 'Authentication required. Please provide a Bearer token.', 401, 'UNAUTHORIZED');
-  }
-
-  if (isTokenRevoked(token)) {
-    return sendError(res, 'Session has been logged out. Please sign in again.', 401, 'UNAUTHORIZED');
   }
 
   try {

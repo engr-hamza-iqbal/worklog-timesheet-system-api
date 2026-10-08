@@ -3,7 +3,6 @@ import authService from '../services/authService.js';
 import otpService from '../services/otpService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { registerClient } from '../utils/eventStream.js';
-import { revokeToken } from '../middleware/auth.js';
 
 function setAuthCookies(res, token) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
@@ -168,15 +167,6 @@ export async function handleGetMe(req, res, next) {
 
 export async function handleLogout(req, res, next) {
   try {
-    const rawCookieToken = req.headers.cookie?.match(/(?:^|;\s*)worklog_session=([^;]+)/)?.[1];
-    const cookieToken = rawCookieToken ? decodeURIComponent(rawCookieToken) : null;
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken;
-
-    if (token) {
-      revokeToken(token);
-    }
-
     clearAuthCookies(res);
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
   } catch (err) {
