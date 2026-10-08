@@ -502,6 +502,213 @@ export async function getCurrentUser(userId) {
   };
 }
 
+export function validatePasswordStrength(password) {
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    const error = new Error('Password must be at least 8 characters long.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+  if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) {
+    const missing = [];
+    if (!hasUpper) missing.push('an uppercase letter');
+    if (!hasLower) missing.push('a lowercase letter');
+    if (!hasDigit) missing.push('a number');
+    if (!hasSpecial) missing.push('a special character');
+    const error = new Error(`Password is too weak. It must contain ${missing.join(', ')}.`);
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+}
+
+/**
+ * Reset password using either current password OR OTP code sent to registered email
+ */
+export async function resetPassword({ email, mode, otp, oldPassword, newPassword }) {
+  if (!email || !email.trim()) {
+    const error = new Error('Email address is required.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  validatePasswordStrength(newPassword);
+
+  const user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
+
+  if (!user) {
+    const error = new Error('No account found with this email address.');
+    error.statusCode = 404;
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  if (!user.isActive) {
+    const error = new Error('This account has been deactivated. Please contact an administrator.');
+    error.statusCode = 403;
+    error.code = 'ACCOUNT_DEACTIVATED';
+    throw error;
+  }
+
+  // Verification mode: either via oldPassword or via OTP code
+  const isOldPassword = mode === 'oldPassword' || (oldPassword && !otp);
+  const isOtp = mode === 'otp' || Boolean(otp);
+
+  if (isOldPassword) {
+    if (!oldPassword) {
+      const error = new Error('Current (old) password is required.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+    const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
+    if (!isMatch) {
+      const error = new Error('Current password does not match our records.');
+      error.statusCode = 400;
+      error.code = 'INVALID_CREDENTIALS';
+      throw error;
+    }
+  } else if (isOtp) {
+    if (!otp) {
+      const error = new Error('Verification code (OTP) is required.');
+      error.statusCode = 400;
+      error.code = 'OTP_REQUIRED';
+      throw error;
+    }
+    otpService.consumePasswordResetOtp(normalizedEmail, otp);
+  } else {
+    const error = new Error('Please provide either your current password or an email verification code (OTP).');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  // Prevent setting identical password
+  const isSame = await bcrypt.compare(newPassword, user.passwordHash);
+  if (isSame) {
+    const error = new Error('New password must be different from your current password.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: newHash },
+  });
+
+  return {
+    success: true,
+    message: 'Your password has been successfully reset. You can now log in with your new password.',
+  };
+}
+
+/**
+ * Update authenticated user's profile and optionally change password with current password verification
+ */
+export async function updateProfile(userId, { name, mode, otp, oldPassword, newPassword }) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user || !user.isActive) {
+    const error = new Error('User not found or account inactive.');
+    error.statusCode = 404;
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
+  const data = {};
+
+  if (name !== undefined) {
+    if (!name || !name.trim() || name.trim().length < 2) {
+      const error = new Error('Name must be at least 2 characters.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+    data.name = name.trim();
+  }
+
+  if (newPassword) {
+    validatePasswordStrength(newPassword);
+
+    const isOtp = mode === 'otp' || Boolean(otp);
+    if (isOtp) {
+      if (!otp) {
+        const error = new Error('Verification code (OTP) is required.');
+        error.statusCode = 400;
+        error.code = 'OTP_REQUIRED';
+        throw error;
+      }
+      otpService.consumePasswordResetOtp(user.email, otp);
+    } else {
+      if (!oldPassword) {
+        const error = new Error('Current password is required to change password.');
+        error.statusCode = 400;
+        error.code = 'VALIDATION_ERROR';
+        throw error;
+      }
+
+      const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
+      if (!isMatch) {
+        const error = new Error('Current password is incorrect.');
+        error.statusCode = 400;
+        error.code = 'INVALID_CREDENTIALS';
+        throw error;
+      }
+    }
+
+    const isSame = await bcrypt.compare(newPassword, user.passwordHash);
+    if (isSame) {
+      const error = new Error('New password must be different from your current password.');
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      throw error;
+    }
+
+    data.passwordHash = await bcrypt.hash(newPassword, 10);
+  }
+
+  if (Object.keys(data).length === 0) {
+    const error = new Error('No profile changes provided.');
+    error.statusCode = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      accountType: true,
+      isActive: true,
+      createdAt: true,
+    },
+  });
+
+  const capabilities = await getUserActiveCapabilities(updatedUser);
+
+  return {
+    user: updatedUser,
+    capabilities,
+  };
+}
+
 export default {
   generateToken,
   cleanInvitationToken,
@@ -515,4 +722,7 @@ export default {
   register,
   login,
   getCurrentUser,
+  resetPassword,
+  updateProfile,
+  validatePasswordStrength,
 };

@@ -3,6 +3,7 @@ import authService from '../services/authService.js';
 import otpService from '../services/otpService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { registerClient } from '../utils/eventStream.js';
+import { revokeToken } from '../middleware/auth.js';
 
 function setAuthCookies(res, token) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
@@ -28,11 +29,21 @@ function ensureCsrfCookie(req, res) {
   return csrfToken;
 }
 
-function clearAuthCookies(res) {
-  const sameSite = process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax';
+export function clearAuthCookies(res) {
+  const isProd = process.env.NODE_ENV === 'production';
+  const sameSite = isProd ? 'None' : 'Lax';
+  const secure = isProd ? '; Secure' : '';
+
+  try {
+    if (typeof res.clearCookie === 'function') {
+      res.clearCookie('worklog_session', { path: '/', httpOnly: true, sameSite: isProd ? 'none' : 'lax', secure: isProd });
+      res.clearCookie('worklog_csrf_token', { path: '/', sameSite: isProd ? 'none' : 'lax', secure: isProd });
+    }
+  } catch {}
+
   res.setHeader('Set-Cookie', [
-    `worklog_session=; HttpOnly; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}`,
-    `worklog_csrf_token=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}`,
+    `worklog_session=; HttpOnly; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}${secure}`,
+    `worklog_csrf_token=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=${sameSite}${secure}`,
   ]);
 }
 
@@ -41,6 +52,26 @@ export async function handleSendOtp(req, res, next) {
     const { email } = req.body;
     const result = await otpService.sendOtp(email);
     return sendSuccess(res, result, 'Verification code sent to your email. Valid for 10 minutes.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleSendResetOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    const result = await otpService.sendPasswordResetOtp(email);
+    return sendSuccess(res, result, 'Verification code sent to your email. Valid for 10 minutes.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleResetPassword(req, res, next) {
+  try {
+    const { email, mode, otp, oldPassword, newPassword } = req.body;
+    const result = await authService.resetPassword({ email, mode, otp, oldPassword, newPassword });
+    return sendSuccess(res, result, result.message, 200);
   } catch (err) {
     next(err);
   }
@@ -137,8 +168,28 @@ export async function handleGetMe(req, res, next) {
 
 export async function handleLogout(req, res, next) {
   try {
+    const rawCookieToken = req.headers.cookie?.match(/(?:^|;\s*)worklog_session=([^;]+)/)?.[1];
+    const cookieToken = rawCookieToken ? decodeURIComponent(rawCookieToken) : null;
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken;
+
+    if (token) {
+      revokeToken(token);
+    }
+
     clearAuthCookies(res);
     return sendSuccess(res, { loggedOut: true }, 'Successfully logged out.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleUpdateProfile(req, res, next) {
+  try {
+    const { name, mode, otp, oldPassword, newPassword } = req.body;
+    const result = await authService.updateProfile(req.user.id, { name, mode, otp, oldPassword, newPassword });
+    result.csrfToken = ensureCsrfCookie(req, res);
+    return sendSuccess(res, result, 'Profile updated successfully.', 200);
   } catch (err) {
     next(err);
   }
@@ -174,6 +225,8 @@ export function handleEventStream(req, res) {
 
 export default {
   handleSendOtp,
+  handleSendResetOtp,
+  handleResetPassword,
   handleRegister,
   handleLogin,
   handleCreateInvitation,
@@ -181,6 +234,7 @@ export default {
   handleVerifyInvitation,
   handleRevokeInvitation,
   handleGetMe,
+  handleUpdateProfile,
   handleLogout,
   handleEventStream,
 };

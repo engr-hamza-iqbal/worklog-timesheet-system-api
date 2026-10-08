@@ -64,9 +64,25 @@ app.use((req, res, next) => {
   const hasSessionCookie = /(?:^|;\s*)worklog_session=/.test(cookieHeader);
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
 
-  const isLogout = req.path === '/api/auth/logout' || req.originalUrl?.startsWith('/api/auth/logout');
+  const path = req.path || '';
+  const url = req.originalUrl || '';
 
-  if (hasSessionCookie && isMutation && !isLogout) {
+  const isAuthLifecycle =
+    path.startsWith('/api/auth/login') ||
+    path.startsWith('/api/auth/logout') ||
+    path.startsWith('/api/auth/register') ||
+    path.startsWith('/api/auth/send-otp') ||
+    path.startsWith('/api/auth/send-reset-otp') ||
+    path.startsWith('/api/auth/reset-password') ||
+    path.startsWith('/api/auth/verify-invitation') ||
+    url.includes('/api/auth/logout') ||
+    url.includes('/api/auth/login') ||
+    url.includes('/api/auth/register') ||
+    url.includes('/api/auth/reset-password') ||
+    url.includes('/api/auth/send-reset-otp') ||
+    url.includes('/api/auth/send-otp');
+
+  if (hasSessionCookie && isMutation && !isAuthLifecycle) {
     const csrfCookieMatch = cookieHeader.match(/(?:^|;\s*)worklog_csrf_token=([^;]+)/);
     const csrfCookie = csrfCookieMatch ? decodeURIComponent(csrfCookieMatch[1]) : null;
     const csrfHeader = req.headers['x-csrf-token'];
