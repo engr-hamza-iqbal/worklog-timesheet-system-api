@@ -72,7 +72,9 @@ app.use((req, res, next) => {
     path.startsWith('/api/auth/logout') ||
     path.startsWith('/api/auth/register') ||
     path.startsWith('/api/auth/send-otp') ||
+    path.startsWith('/api/auth/verify-otp') ||
     path.startsWith('/api/auth/send-reset-otp') ||
+    path.startsWith('/api/auth/verify-reset-otp') ||
     path.startsWith('/api/auth/reset-password') ||
     path.startsWith('/api/auth/verify-invitation') ||
     url.includes('/api/auth/logout') ||
@@ -80,6 +82,8 @@ app.use((req, res, next) => {
     url.includes('/api/auth/register') ||
     url.includes('/api/auth/reset-password') ||
     url.includes('/api/auth/send-reset-otp') ||
+    url.includes('/api/auth/verify-reset-otp') ||
+    url.includes('/api/auth/verify-otp') ||
     url.includes('/api/auth/send-otp');
 
   if (hasSessionCookie && isMutation && !isAuthLifecycle) {

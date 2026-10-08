@@ -159,11 +159,6 @@ export async function sendOtp(email) {
   const subject = `Your WorkLog Verification Code: ${code}`;
   const html = buildOtpEmailHtml({ code, expiresInMinutes });
 
-  // Log OTP verification code to server console (accessible via Render logs if SMTP ports are blocked)
-  console.log(`\n======================================================`);
-  console.log(`[AUTH OTP] Email Verification Code for: ${normalizedEmail}`);
-  console.log(`[AUTH OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
-  console.log(`======================================================\n`);
 
   try {
     await sendEmailWithFallback({
@@ -366,11 +361,6 @@ export async function sendPasswordResetOtp(email) {
   const subject = `Your WorkLog Password Reset Code: ${code}`;
   const html = buildPasswordResetEmailHtml({ code, expiresInMinutes });
 
-  // Log OTP verification code to server console (accessible via Render logs if SMTP ports are blocked)
-  console.log(`\n======================================================`);
-  console.log(`[PASSWORD RESET OTP] Target: ${normalizedEmail}`);
-  console.log(`[PASSWORD RESET OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
-  console.log(`======================================================\n`);
 
   try {
     await sendEmailWithFallback({

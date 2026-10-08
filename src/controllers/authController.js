@@ -66,6 +66,26 @@ export async function handleSendResetOtp(req, res, next) {
   }
 }
 
+export async function handleVerifyResetOtp(req, res, next) {
+  try {
+    const { email, otp } = req.body;
+    otpService.verifyPasswordResetOtp(email, otp);
+    return sendSuccess(res, { verified: true }, 'Verification code verified successfully.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleVerifyOtp(req, res, next) {
+  try {
+    const { email, otp } = req.body;
+    otpService.verifyOtp(email, otp);
+    return sendSuccess(res, { verified: true }, 'Verification code verified successfully.', 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function handleResetPassword(req, res, next) {
   try {
     const { email, mode, otp, oldPassword, newPassword } = req.body;
