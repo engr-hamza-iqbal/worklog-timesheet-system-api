@@ -25,6 +25,9 @@ function getTransporter() {
         user: SMTP_USER,
         pass: SMTP_PASS,
       },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
     });
   } else if (NODE_ENV === 'test') {
     transporter = nodemailer.createTransport({
@@ -216,12 +219,16 @@ export function queueEmail({
 
       const mailClient = getTransporter();
 
-      await mailClient.sendMail({
+      const mailPromise = mailClient.sendMail({
         from: EMAIL_FROM,
         to: recipientEmail,
         subject,
         html,
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Email dispatch timed out after 10000ms')), 10000)
+      );
+      await Promise.race([mailPromise, timeoutPromise]);
 
       await prisma.emailLog.update({
         where: { id: log.id },
@@ -232,6 +239,7 @@ export function queueEmail({
         },
       });
     } catch (error) {
+      transporter = null;
       if (log) {
         await prisma.emailLog
           .update({

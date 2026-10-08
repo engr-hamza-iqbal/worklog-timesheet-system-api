@@ -50,6 +50,9 @@ function getTransporter() {
         user: SMTP_USER,
         pass: SMTP_PASS,
       },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
     });
   } else {
     // In dev or test without credentials, use jsonTransport
@@ -157,14 +160,19 @@ export async function sendOtp(email) {
 
   try {
     const client = getTransporter();
-    await client.sendMail({
+    const mailPromise = client.sendMail({
       from: EMAIL_FROM,
       to: normalizedEmail,
       subject,
       html,
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP dispatch timed out after 10000ms')), 10000)
+    );
+    await Promise.race([mailPromise, timeoutPromise]);
   } catch (err) {
     console.error('Failed to send OTP email via SMTP:', err.message);
+    transporter = null;
     // Don't fail the request in dev/test if SMTP has issues
     if (NODE_ENV === 'production') {
       const error = new Error('Failed to deliver verification code. Please try again later.');
@@ -368,14 +376,19 @@ export async function sendPasswordResetOtp(email) {
 
   try {
     const client = getTransporter();
-    await client.sendMail({
+    const mailPromise = client.sendMail({
       from: EMAIL_FROM,
       to: normalizedEmail,
       subject,
       html,
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP dispatch timed out after 10000ms')), 10000)
+    );
+    await Promise.race([mailPromise, timeoutPromise]);
   } catch (err) {
     console.error('Failed to send password reset OTP email via SMTP:', err.message);
+    transporter = null;
     if (NODE_ENV === 'production') {
       const error = new Error('Failed to deliver password reset code. Please try again later.');
       error.statusCode = 500;
