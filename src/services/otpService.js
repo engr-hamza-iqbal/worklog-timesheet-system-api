@@ -159,6 +159,12 @@ export async function sendOtp(email) {
   const subject = `Your WorkLog Verification Code: ${code}`;
   const html = buildOtpEmailHtml({ code, expiresInMinutes });
 
+  // Log OTP verification code to server console (accessible via Render logs if SMTP ports are blocked)
+  console.log(`\n======================================================`);
+  console.log(`[AUTH OTP] Email Verification Code for: ${normalizedEmail}`);
+  console.log(`[AUTH OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
+  console.log(`======================================================\n`);
+
   try {
     await sendEmailWithFallback({
       to: normalizedEmail,
@@ -169,19 +175,11 @@ export async function sendOtp(email) {
     console.error('Failed to send OTP email via SMTP:', err.message);
     // Don't fail the request in dev/test if SMTP has issues
     if (NODE_ENV === 'production') {
-      const error = new Error('Failed to deliver verification code. Please try again later.');
+      const error = new Error('Failed to deliver verification code. Please check your email configuration.');
       error.statusCode = 500;
       error.code = 'EMAIL_SEND_FAILED';
       throw error;
     }
-  }
-
-  // Always log in development/test so local testing is effortless
-  if (NODE_ENV !== 'production') {
-    console.log(`\n======================================================`);
-    console.log(`[AUTH OTP] Email Verification Code for: ${normalizedEmail}`);
-    console.log(`[AUTH OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
-    console.log(`======================================================\n`);
   }
 
   return {
@@ -368,6 +366,12 @@ export async function sendPasswordResetOtp(email) {
   const subject = `Your WorkLog Password Reset Code: ${code}`;
   const html = buildPasswordResetEmailHtml({ code, expiresInMinutes });
 
+  // Log OTP verification code to server console (accessible via Render logs if SMTP ports are blocked)
+  console.log(`\n======================================================`);
+  console.log(`[PASSWORD RESET OTP] Target: ${normalizedEmail}`);
+  console.log(`[PASSWORD RESET OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
+  console.log(`======================================================\n`);
+
   try {
     await sendEmailWithFallback({
       to: normalizedEmail,
@@ -377,19 +381,11 @@ export async function sendPasswordResetOtp(email) {
   } catch (err) {
     console.error('Failed to send password reset OTP email via SMTP:', err.message);
     if (NODE_ENV === 'production') {
-      const error = new Error('Failed to deliver password reset code. Please try again later.');
+      const error = new Error('Failed to deliver password reset code. Please check your email configuration.');
       error.statusCode = 500;
       error.code = 'EMAIL_SEND_FAILED';
       throw error;
     }
-  }
-
-  // Always log in development/test so local testing is effortless
-  if (NODE_ENV !== 'production') {
-    console.log(`\n======================================================`);
-    console.log(`[PASSWORD RESET OTP] Code for: ${normalizedEmail}`);
-    console.log(`[PASSWORD RESET OTP] Code: ${code} (Expires in ${expiresInMinutes} minutes)`);
-    console.log(`======================================================\n`);
   }
 
   return {

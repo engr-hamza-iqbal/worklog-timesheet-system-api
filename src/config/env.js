@@ -23,17 +23,19 @@ export const CORS_ORIGIN = process.env.CORS_ORIGIN || process.env.FRONTEND_URL |
 if (NODE_ENV === 'production' && (!FRONTEND_URL || !CORS_ORIGIN || CORS_ORIGIN === '*' || /localhost|127\.0\.0\.1/.test(CORS_ORIGIN))) {
   throw new Error('FRONTEND_URL and a production CORS_ORIGIN must be configured without localhost or wildcard origins.');
 }
+export const RESEND_API_KEY = process.env.RESEND_API_KEY || null;
+export const BREVO_API_KEY = process.env.BREVO_API_KEY || null;
 export const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 export const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 export const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER || null;
 export const SMTP_PASS = (process.env.SMTP_PASS || process.env.APP_PASSWORD || '').replace(/\s+/g, '') || null;
-if (NODE_ENV === 'production' && (!SMTP_USER || !SMTP_PASS)) {
-  throw new Error('SMTP_USER and SMTP_PASS must be configured in production.');
+if (NODE_ENV === 'production' && !RESEND_API_KEY && !BREVO_API_KEY && (!SMTP_USER || !SMTP_PASS)) {
+  throw new Error('Either RESEND_API_KEY, BREVO_API_KEY, or SMTP_USER and SMTP_PASS must be configured in production.');
 }
 export const SMTP_SECURE = process.env.SMTP_SECURE === undefined
   ? SMTP_PORT === 465
   : process.env.SMTP_SECURE === 'true';
-export const EMAIL_FROM = process.env.EMAIL_FROM || (SMTP_USER ? `Work Log <${SMTP_USER}>` : 'Work Log <no-reply@localhost>');
+export const EMAIL_FROM = process.env.EMAIL_FROM || (SMTP_USER ? `Work Log <${SMTP_USER}>` : 'Work Log <onboarding@resend.dev>');
 
 export default {
   PORT,

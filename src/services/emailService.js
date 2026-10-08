@@ -4,6 +4,8 @@ import {
   EMAIL_FROM,
   FRONTEND_URL,
   NODE_ENV,
+  RESEND_API_KEY,
+  BREVO_API_KEY,
   SMTP_HOST,
   SMTP_PORT,
   SMTP_USER,
@@ -12,12 +14,69 @@ import {
 } from '../config/env.js';
 
 export async function sendEmailWithFallback({ to, subject, html }) {
+  // 1. Prefer HTTP-based email API (Port 443) if configured.
+  // Cloud providers like Render free-tier strictly block outbound SMTP ports 25, 465, and 587.
+  // Port 443 (HTTPS) is never blocked and delivers reliably in milliseconds.
+  if (RESEND_API_KEY) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: EMAIL_FROM || 'Work Log <onboarding@resend.dev>',
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Resend HTTP API dispatch failed');
+      }
+      return data;
+    } catch (resendErr) {
+      console.error('Resend HTTPS API delivery failed:', resendErr.message);
+      if (!SMTP_USER || !SMTP_PASS) throw resendErr;
+      console.warn('Falling back to SMTP transport...');
+    }
+  }
+
+  if (BREVO_API_KEY) {
+    try {
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': BREVO_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { email: SMTP_USER || 'no-reply@worklog.local', name: 'Work Log System' },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Brevo HTTP API dispatch failed');
+      }
+      return data;
+    } catch (brevoErr) {
+      console.error('Brevo HTTPS API delivery failed:', brevoErr.message);
+      if (!SMTP_USER || !SMTP_PASS) throw brevoErr;
+      console.warn('Falling back to SMTP transport...');
+    }
+  }
+
   if (!SMTP_USER || !SMTP_PASS) {
     if (NODE_ENV !== 'production' || NODE_ENV === 'test') {
       const devTransporter = nodemailer.createTransport({ jsonTransport: true });
       return devTransporter.sendMail({ from: EMAIL_FROM, to, subject, html });
     }
-    throw new Error('SMTP credentials are required in production.');
+    throw new Error('Email credentials are required in production (provide RESEND_API_KEY, BREVO_API_KEY, or SMTP credentials).');
   }
 
   const primaryPort = Number(SMTP_PORT) || 587;
