@@ -4,8 +4,9 @@ import {
   EMAIL_FROM,
   FRONTEND_URL,
   NODE_ENV,
-  RESEND_API_KEY,
-  BREVO_API_KEY,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_FUNCTION_URL,
   SMTP_HOST,
   SMTP_PORT,
   SMTP_USER,
@@ -13,70 +14,53 @@ import {
   SMTP_SECURE,
 } from '../config/env.js';
 
-export async function sendEmailWithFallback({ to, subject, html }) {
-  // 1. Prefer HTTP-based email API (Port 443) if configured.
-  // Cloud providers like Render free-tier strictly block outbound SMTP ports 25, 465, and 587.
-  // Port 443 (HTTPS) is never blocked and delivers reliably in milliseconds.
-  if (RESEND_API_KEY) {
+export async function sendEmailWithFallback({ to, subject, html, text }) {
+  // 1. If running in production on Render (or if SUPABASE_FUNCTION_URL is configured):
+  // Render Free Tier drops outbound TCP traffic on ports 25, 465, and 587.
+  // Calling the Supabase Edge Function over HTTPS (Port 443) bypasses Render's firewall completely.
+  if (SUPABASE_FUNCTION_URL && (NODE_ENV === 'production' || process.env.USE_SUPABASE_EMAIL === 'true')) {
     try {
-      const response = await fetch('https://api.resend.com/emails', {
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+      if (SUPABASE_ANON_KEY) {
+        headers['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
+        headers['apikey'] = SUPABASE_ANON_KEY;
+      }
+
+      const response = await fetch(SUPABASE_FUNCTION_URL, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
-          from: EMAIL_FROM || 'Work Log <onboarding@resend.dev>',
-          to: Array.isArray(to) ? to : [to],
+          to,
           subject,
           html,
+          text,
+          from: EMAIL_FROM,
+          smtpUser: SMTP_USER,
+          smtpPass: SMTP_PASS,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || 'Resend HTTP API dispatch failed');
-      }
-      return data;
-    } catch (resendErr) {
-      console.error('Resend HTTPS API delivery failed:', resendErr.message);
-      if (!SMTP_USER || !SMTP_PASS) throw resendErr;
-      console.warn('Falling back to SMTP transport...');
-    }
-  }
 
-  if (BREVO_API_KEY) {
-    try {
-      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'api-key': BREVO_API_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sender: { email: SMTP_USER || 'no-reply@worklog.local', name: 'Work Log System' },
-          to: [{ email: to }],
-          subject,
-          htmlContent: html,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || 'Brevo HTTP API dispatch failed');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || `Supabase Edge Function returned ${response.status}`);
       }
       return data;
-    } catch (brevoErr) {
-      console.error('Brevo HTTPS API delivery failed:', brevoErr.message);
-      if (!SMTP_USER || !SMTP_PASS) throw brevoErr;
-      console.warn('Falling back to SMTP transport...');
+    } catch (edgeErr) {
+      console.warn('Supabase Edge Function delivery failed:', edgeErr.message);
+      // If we don't have local SMTP credentials, rethrow
+      if (!SMTP_USER || !SMTP_PASS) throw edgeErr;
+      console.warn('Falling back to direct SMTP transport...');
     }
   }
 
   if (!SMTP_USER || !SMTP_PASS) {
     if (NODE_ENV !== 'production' || NODE_ENV === 'test') {
       const devTransporter = nodemailer.createTransport({ jsonTransport: true });
-      return devTransporter.sendMail({ from: EMAIL_FROM, to, subject, html });
+      return devTransporter.sendMail({ from: EMAIL_FROM, to, subject, html, text });
     }
-    throw new Error('Email credentials are required in production (provide RESEND_API_KEY, BREVO_API_KEY, or SMTP credentials).');
+    throw new Error('Email credentials are required in production (configure SUPABASE_FUNCTION_URL or SMTP credentials).');
   }
 
   const primaryPort = Number(SMTP_PORT) || 587;
