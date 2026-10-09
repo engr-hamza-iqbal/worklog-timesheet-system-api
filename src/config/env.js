@@ -37,6 +37,7 @@ export const SMTP_SECURE = process.env.SMTP_SECURE === undefined
   ? SMTP_PORT === 465
   : process.env.SMTP_SECURE === 'true';
 export const EMAIL_FROM = process.env.EMAIL_FROM || (SMTP_USER ? `Work Log <${SMTP_USER}>` : 'Work Log <no-reply@localhost>');
+export const USE_SUPABASE_EMAIL = process.env.USE_SUPABASE_EMAIL === 'true' || NODE_ENV === 'production';
 
 export default {
   PORT,
@@ -50,6 +51,10 @@ export default {
   REDIS_URL,
   FRONTEND_URL,
   CORS_ORIGIN,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_FUNCTION_URL,
+  USE_SUPABASE_EMAIL,
   EMAIL_FROM,
   SMTP_HOST,
   SMTP_PORT,

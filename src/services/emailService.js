@@ -7,6 +7,7 @@ import {
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
   SUPABASE_FUNCTION_URL,
+  USE_SUPABASE_EMAIL,
   SMTP_HOST,
   SMTP_PORT,
   SMTP_USER,
@@ -18,7 +19,7 @@ export async function sendEmailWithFallback({ to, subject, html, text }) {
   // 1. If running in production on Render (or if SUPABASE_FUNCTION_URL is configured):
   // Render Free Tier drops outbound TCP traffic on ports 25, 465, and 587.
   // Calling the Supabase Edge Function over HTTPS (Port 443) bypasses Render's firewall completely.
-  if (SUPABASE_FUNCTION_URL && (NODE_ENV === 'production' || process.env.USE_SUPABASE_EMAIL === 'true')) {
+  if (SUPABASE_FUNCTION_URL && (NODE_ENV === 'production' || USE_SUPABASE_EMAIL)) {
     try {
       const headers = {
         'Content-Type': 'application/json',
