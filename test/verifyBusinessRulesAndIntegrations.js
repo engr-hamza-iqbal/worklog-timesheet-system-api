@@ -120,13 +120,18 @@ async function runVerification() {
     console.log('  ✔ Rule 2 passed: Single entry cannot exceed sensible maximum (16h).');
 
     // Rule 3: Daily cap across entries cannot exceed 24 hours (1440 min)
-    const testCapDate = '2026-08-10';
+    const capDateObj = new Date();
+    capDateObj.setUTCDate(capDateObj.getUTCDate() - 3);
+    const testCapDate = capDateObj.toISOString().slice(0, 10);
+
     const entry1 = await request('/api/timesheets', {
       method: 'POST',
       token: adminToken,
       body: { projectId: coreProject.id, workDate: testCapDate, durationMinutes: 720, description: 'First 12 hours' },
     });
-    assert(entry1.status === 201, 'First entry of 12h should succeed.');
+    assert(entry1.status === 201, `First entry of 12h should succeed (got ${entry1.status} ${JSON.stringify(entry1.body)}).`);
+
+
     cleanupEntryIds.push(entry1.body.data.id);
 
     const exceed24h = await request('/api/timesheets', {
