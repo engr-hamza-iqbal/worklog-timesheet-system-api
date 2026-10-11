@@ -17,11 +17,29 @@ export function errorHandler(err, req, res, next) {
     return sendError(res, 'Authentication token has expired', 401, 'TOKEN_EXPIRED');
   }
 
+  if (
+    err.name === 'PrismaClientInitializationError' ||
+    err.code === 'P1001' ||
+    err.code === 'P1002' ||
+    err.code === 'P1008' ||
+    err.code === 'P1017' ||
+    (typeof err.message === 'string' && err.message.includes("Can't reach database server"))
+  ) {
+    console.error('[Database Unavailable]:', err.message || err);
+    return sendError(
+      res,
+      'The database service is temporarily waking up or re-establishing connections. Please retry your request in a few moments.',
+      503,
+      'DATABASE_UNAVAILABLE'
+    );
+  }
+
   if (err.code === 'P2002') {
     return sendError(res, 'A unique constraint was violated', 409, 'CONFLICT', {
       target: err.meta?.target,
     });
   }
+
 
   return sendError(res, message, statusCode, code);
 }
