@@ -386,10 +386,17 @@ model EmailLog {
   recipientEmail    String
   emailType         EmailType
   subject           String
+  html              String?     @db.Text
+  text              String?     @db.Text
   relatedEntityType String?
   relatedEntityId   String?
   referenceDate     DateTime?   @db.Date
   status            EmailStatus @default(PENDING)
+  retryCount        Int         @default(0)
+  maxRetries        Int         @default(3)
+  lockedAt          DateTime?
+  lockedBy          String?
+  nextRetryAt       DateTime?   @default(now())
   errorMessage      String?     @db.Text
   attemptedAt       DateTime    @default(now())
   sentAt            DateTime?
@@ -399,5 +406,7 @@ model EmailLog {
 
   @@index([recipientUserId, emailType, referenceDate, attemptedAt])
   @@index([recipientEmail, createdAt])
+  @@index([status, nextRetryAt, lockedAt])
   @@unique([recipientUserId, emailType, referenceDate])
 }
+

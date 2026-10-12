@@ -215,19 +215,44 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
   const sent = [];
   const skipped = [];
 
-  const { canSendMissingTimesheetChase, buildMissingTimesheetEmail, queueEmail, reserveEmailLog } = await import('./emailService.js');
+  const { buildMissingTimesheetEmail, queueEmail, reserveEmailLog } = await import('./emailService.js');
+
+  const dateObj = new Date(`${checkDate}T00:00:00.000Z`);
+  const startOfDay = new Date();
+  startOfDay.setUTCHours(0, 0, 0, 0);
+
+  // Consolidated parallel batch lookups to avoid blocking the HTTP request with N * 4 queries
+  const [entries, timeOffDays, existingLogs] = await Promise.all([
+    prisma.timeEntry.findMany({
+      where: { userId: { in: userIds }, workDate: dateObj, deletedAt: null },
+      select: { userId: true },
+    }),
+    prisma.timeOffDay.findMany({
+      where: { userId: { in: userIds }, date: dateObj, status: 'APPROVED' },
+      select: { userId: true },
+    }),
+    prisma.emailLog.findMany({
+      where: {
+        recipientUserId: { in: userIds },
+        emailType: 'MISSING_TIMESHEET',
+        referenceDate: dateObj,
+        attemptedAt: { gte: startOfDay },
+        status: { in: ['SENT', 'PENDING'] },
+      },
+      select: { recipientUserId: true },
+    }),
+  ]);
+
+  const usersWithEntry = new Set(entries.map((e) => e.userId));
+  const usersWithLeave = new Set(timeOffDays.map((t) => t.userId));
+  const usersRemindedToday = new Set(existingLogs.map((l) => l.recipientUserId));
 
   for (const user of users) {
-    const [hasEntry, hasApprovedTimeOff] = await Promise.all([
-      prisma.timeEntry.findFirst({ where: { userId: user.id, workDate: new Date(`${checkDate}T00:00:00.000Z`), deletedAt: null }, select: { id: true } }),
-      prisma.timeOffDay.findFirst({ where: { userId: user.id, date: new Date(`${checkDate}T00:00:00.000Z`), status: 'APPROVED' }, select: { id: true } }),
-    ]);
-    if (hasEntry || hasApprovedTimeOff) {
+    if (usersWithEntry.has(user.id) || usersWithLeave.has(user.id)) {
       skipped.push({ userId: user.id, name: user.name, reason: 'No missing timesheet for this date' });
       continue;
     }
-    const canSend = await canSendMissingTimesheetChase(user.id, checkDate);
-    if (!canSend) {
+    if (usersRemindedToday.has(user.id)) {
       skipped.push({ userId: user.id, name: user.name, reason: 'Already reminded today' });
       continue;
     }
@@ -254,6 +279,7 @@ export async function chaseMissingTimesheets({ date: targetDate, userIds, actorU
       }
       throw error;
     }
+
     queueEmail({
       recipientUserId: user.id,
       recipientEmail: user.email,

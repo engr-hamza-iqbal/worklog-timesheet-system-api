@@ -27,8 +27,8 @@ export async function handleUpdateType(req, res) {
 
 export async function handleGetRequests(req, res) {
   try {
-    const { userId, status, startDate, endDate } = req.query;
-    return sendSuccess(res, await getTimeOffRequests(req.user, { userId, status, startDate, endDate }));
+    const { userId, status, startDate, endDate, page, limit } = req.query;
+    return sendSuccess(res, await getTimeOffRequests(req.user, { userId, status, startDate, endDate, page, limit }));
   } catch (error) { return handleError(res, error); }
 }
 

@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
+import prisma from '../src/config/db.js';
 
 async function main() {
   console.log('--- Starting Seed Script (Node.js/JavaScript ESM) ---');

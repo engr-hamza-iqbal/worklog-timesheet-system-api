@@ -120,7 +120,7 @@ export async function autoExpirePendingRequests() {
   }
 }
 
-export async function getTimeOffRequests(actorUser, { userId, status, startDate, endDate } = {}) {
+export async function getTimeOffRequests(actorUser, { userId, status, startDate, endDate, page, limit } = {}) {
   await autoExpirePendingRequests();
 
   let targetUserId = userId || (actorUser.accountType === 'ADMIN' ? null : actorUser.id);
@@ -173,8 +173,35 @@ export async function getTimeOffRequests(actorUser, { userId, status, startDate,
     where.endDate = { lte: dateOnly(endDate) };
   }
 
-  const requests = await prisma.timeOffRequest.findMany({ where, include: requestInclude, orderBy: { startDate: 'desc' } });
-  return requests.map(formatRequest);
+  const isExplicitPaginated = page !== undefined || limit !== undefined;
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+
+  const [total, requests] = await prisma.$transaction([
+    prisma.timeOffRequest.count({ where }),
+    prisma.timeOffRequest.findMany({
+      where,
+      include: requestInclude,
+      orderBy: [{ startDate: 'desc' }, { id: 'desc' }],
+      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+      take: safeLimit,
+    }),
+  ]);
+
+  const formatted = requests.map(formatRequest);
+
+  if (isExplicitPaginated) {
+    return {
+      requests: formatted,
+      items: formatted,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    };
+  }
+
+  return formatted;
 }
 
 export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate, endDate, reason }) {

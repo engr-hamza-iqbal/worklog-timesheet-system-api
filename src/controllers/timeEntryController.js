@@ -19,6 +19,13 @@ export async function handleGetTimeEntries(req, res) {
     if (!isIsoDate(startDate) || !isIsoDate(endDate)) throw validationError('startDate and endDate must use YYYY-MM-DD format.');
     if (endDate < startDate) throw validationError('endDate cannot be earlier than startDate.');
 
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T00:00:00.000Z`);
+    const diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    if (diffDays > 45) {
+      throw validationError('Requested date range cannot exceed 45 days for calendar queries. Use dedicated reporting endpoints for larger intervals.');
+    }
+
     const data = await getTimeEntriesForPeriod(actorUser, targetUserId, startDate, endDate);
     return sendSuccess(res, data, 'Time entries retrieved.');
   } catch (err) {

@@ -13,6 +13,13 @@ export const ALL_CAPABILITIES = [
   'VIEW_BILLING',
 ];
 
+// Request-scoped memoization: capabilities are cached on user._activeCapabilities
+// for the duration of a single HTTP request lifecycle. Direct DB mutations / revocations
+// take effect immediately on the user's very next request (0ms latency, zero stale cache window).
+export function bustActiveCapabilitiesCache(userId) {
+  // Maintained for backward compatibility with external calls
+}
+
 export async function getUserActiveCapabilities(user) {
   if (!user || !user.isActive) {
     return {};
@@ -30,6 +37,11 @@ export async function getUserActiveCapabilities(user) {
       };
     }
     return adminCapabilities;
+  }
+
+  // If already evaluated within this request lifecycle, return immediately
+  if (user._activeCapabilities) {
+    return user._activeCapabilities;
   }
 
   const now = new Date();
@@ -94,6 +106,8 @@ export async function getUserActiveCapabilities(user) {
       }
     }
   }
+
+  user._activeCapabilities = capabilityMap;
 
   return capabilityMap;
 }

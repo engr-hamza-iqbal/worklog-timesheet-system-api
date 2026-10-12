@@ -14,6 +14,9 @@ function getResilientDatabaseUrl() {
     if (!currentPoolTimeout || currentPoolTimeout < 45) {
       urlObj.searchParams.set('pool_timeout', '60');
     }
+    // Supabase PgBouncer transaction mode recommendation: 5 connections per client process
+    // prevents pooler client exhaustion when dev server and test suites run concurrently.
+    urlObj.searchParams.set('connection_limit', '5');
     return urlObj.toString();
   } catch {
     return originalUrl;
@@ -43,29 +46,78 @@ function isTransientConnectionError(error) {
     error.code === 'P1017' || // Server closed the connection
     (typeof error.message === 'string' &&
       (error.message.includes("Can't reach database server") ||
+       error.message.includes('Server has closed the connection') ||
+       error.message.includes('ConnectionReset') ||
+       error.message.includes('forcibly closed') ||
        error.message.includes('timed out') ||
        error.message.includes('Connection terminated unexpectedly')))
   );
 }
 
-// Resilient query extension: auto-retry once on transient connection/initialization drops
+async function withResilience(fn, label) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      if (attempt <= 3 && isTransientConnectionError(err)) {
+        const delayMs = attempt * 1200;
+        console.warn(
+          `[Prisma Resilience] Transient DB connection hiccup on ${label} (attempt ${attempt}/3). Retrying in ${delayMs}ms...`
+        );
+        try {
+          await basePrisma.$connect();
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+const IDEMPOTENT_READ_OPERATIONS = new Set([
+  'findUnique',
+  'findUniqueOrThrow',
+  'findFirst',
+  'findFirstOrThrow',
+  'findMany',
+  'count',
+  'aggregate',
+  'groupBy',
+]);
+
+// Resilient query extension: auto-retry with progressive backoff on transient connection drops
+// STRICT SAFETY RULE: Only idempotent read operations are auto-retried.
+// Mutating operations (create, update, delete, upsert) must NEVER be blindly retried
+// upon lost connection, as the remote DB may have committed the mutation before socket reset.
 const prisma = basePrisma.$extends({
   query: {
     $allModels: {
       async $allOperations({ model, operation, args, query }) {
-        try {
-          return await query(args);
-        } catch (firstError) {
-          if (isTransientConnectionError(firstError)) {
-            console.warn(
-              `[Prisma Resilience] Transient DB connection hiccup on ${model}.${operation}. Retrying in 1.5s...`
-            );
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            return await query(args);
-          }
-          throw firstError;
+        if (IDEMPOTENT_READ_OPERATIONS.has(operation)) {
+          return await withResilience(() => query(args), `${model}.${operation}`);
         }
+        // Non-idempotent mutations execute directly without auto-retry
+        return await query(args);
       },
+    },
+  },
+  client: {
+    async $queryRaw(...args) {
+      return await withResilience(() => basePrisma.$queryRaw(...args), '$queryRaw');
+    },
+    async $queryRawUnsafe(...args) {
+      return await withResilience(() => basePrisma.$queryRawUnsafe(...args), '$queryRawUnsafe');
+    },
+    async $executeRaw(...args) {
+      // Mutations execute directly; do not retry raw writes
+      return await basePrisma.$executeRaw(...args);
+    },
+    async $executeRawUnsafe(...args) {
+      // Mutations execute directly; do not retry raw writes
+      return await basePrisma.$executeRawUnsafe(...args);
     },
   },
 });

@@ -9,6 +9,7 @@ try {
 import app from './app.js';
 import { PORT } from './config/env.js';
 import prisma from './config/db.js';
+import { startEmailWorker, stopEmailWorker } from './services/emailWorker.js';
 
 const server = app.listen(PORT, () => {
   if (process.env.NODE_ENV === 'development') {
@@ -17,6 +18,7 @@ const server = app.listen(PORT, () => {
     console.log(`Health check available at http://localhost:${PORT}/health`);
   }
   console.log(`Server started in ${process.env.NODE_ENV} mode.`);
+  startEmailWorker({ pollIntervalMs: 3000 });
 });
 
 // Process-level resilience: catch unhandled promise rejections without crashing the container
@@ -27,6 +29,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Catch uncaught synchronous exceptions, log diagnostics, and attempt graceful teardown
 process.on('uncaughtException', async (error) => {
   console.error('[Process Fatal Guard] Uncaught Exception:', error);
+  stopEmailWorker();
   try {
     if (server?.listening) {
       server.close();
@@ -42,6 +45,7 @@ process.on('uncaughtException', async (error) => {
 // Graceful termination signals (Render, Docker, Kubernetes)
 const handleGracefulShutdown = async (signal) => {
   console.log(`Received ${signal}. Shutting down gracefully...`);
+  stopEmailWorker();
   if (server?.listening) {
     server.close(async () => {
       console.log('HTTP server closed.');
@@ -60,4 +64,5 @@ const handleGracefulShutdown = async (signal) => {
 
 process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+
 

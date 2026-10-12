@@ -7,7 +7,7 @@ import { getUserActiveCapabilities } from './accessService.js';
 /**
  * List all users with assignment counts
  */
-export async function getUsers(actor = null) {
+export async function getUsers(actor = null, { page, limit, search } = {}) {
   const where = {};
   if (actor && actor.accountType !== 'ADMIN') {
     where.accountType = { not: 'ADMIN' };
@@ -24,46 +24,63 @@ export async function getUsers(actor = null) {
     }
   }
 
-  const users = await prisma.user.findMany({
-    where,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      accountType: true,
-      isActive: true,
-      createdAt: true,
-      updatedAt: true,
-      assignments: {
-        where: { removedAt: null },
-        select: {
-          id: true,
-          projectId: true,
-          project: {
-            select: { id: true, name: true, status: true },
-          },
-        },
-      },
-      capabilityGrantsReceived: {
-        where: {
-          revokedAt: null,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: new Date() } },
-          ],
-        },
-        select: {
-          id: true,
-          capability: {
-            select: { code: true },
-          },
-        },
-      },
-    },
-    orderBy: { name: 'asc' },
-  });
+  if (search && typeof search === 'string' && search.trim()) {
+    const s = search.trim();
+    where.OR = [
+      { name: { contains: s, mode: 'insensitive' } },
+      { email: { contains: s, mode: 'insensitive' } },
+    ];
+  }
 
-  return users.map((u) => ({
+  const isExplicitPaginated = page !== undefined || limit !== undefined;
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+
+  const [total, users] = await prisma.$transaction([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        accountType: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        assignments: {
+          where: { removedAt: null },
+          select: {
+            id: true,
+            projectId: true,
+            project: {
+              select: { id: true, name: true, status: true },
+            },
+          },
+        },
+        capabilityGrantsReceived: {
+          where: {
+            revokedAt: null,
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } },
+            ],
+          },
+          select: {
+            id: true,
+            capability: {
+              select: { code: true },
+            },
+          },
+        },
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+      take: safeLimit,
+    }),
+  ]);
+
+  const formatted = users.map((u) => ({
     id: u.id,
     name: u.name,
     email: u.email,
@@ -77,6 +94,19 @@ export async function getUsers(actor = null) {
       ? u.capabilityGrantsReceived.map((g) => g.capability.code)
       : undefined,
   }));
+
+  if (isExplicitPaginated) {
+    return {
+      users: formatted,
+      items: formatted,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    };
+  }
+
+  return formatted;
 }
 
 /**

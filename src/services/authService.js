@@ -467,8 +467,8 @@ export async function login({ email, password }) {
   };
 }
 
-export async function getCurrentUser(userId) {
-  const user = await prisma.user.findUnique({
+export async function getCurrentUser(userId, existingUser = null) {
+  const user = existingUser || (await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
@@ -478,7 +478,7 @@ export async function getCurrentUser(userId) {
       isActive: true,
       createdAt: true,
     },
-  });
+  }));
 
   if (!user) {
     const error = new Error('User not found.');
