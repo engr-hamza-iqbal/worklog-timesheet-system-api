@@ -23,6 +23,17 @@ function memoryIncrement(key, windowMs) {
 }
 
 let dbTableChecked = false;
+let lastDbPurge = Date.now();
+
+async function purgeExpiredDbBuckets() {
+  const now = Date.now();
+  if (now - lastDbPurge < 600000) return;
+  lastDbPurge = now;
+  try {
+    await prisma.$executeRawUnsafe(`DELETE FROM "_RateLimitBucket" WHERE "resetAt" < NOW() - INTERVAL '1 hour'`);
+  } catch {}
+}
+
 async function ensureRateLimitTable() {
   if (dbTableChecked) return;
   try {
@@ -32,8 +43,11 @@ async function ensureRateLimitTable() {
         "count" INTEGER NOT NULL DEFAULT 1,
         "resetAt" TIMESTAMPTZ NOT NULL,
         "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+      )
     `);
+    try {
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "idx_rate_limit_reset_at" ON "_RateLimitBucket" ("resetAt")`);
+    } catch {}
     dbTableChecked = true;
   } catch (err) {
     // If migration/DDL fails, fallback to memory
@@ -43,6 +57,7 @@ async function ensureRateLimitTable() {
 
 export async function databaseIncrement(key, windowMs) {
   await ensureRateLimitTable();
+  purgeExpiredDbBuckets().catch(() => {});
   const resetAtDate = new Date(Date.now() + windowMs);
   const rows = await prisma.$queryRawUnsafe(`
     INSERT INTO "_RateLimitBucket" ("key", "count", "resetAt", "updatedAt")

@@ -4,7 +4,8 @@ import { sendSuccess } from '../utils/response.js';
 export async function handleGetClients(req, res, next) {
   try {
     const activeOnly = req.query.activeOnly === 'true';
-    const clients = await clientProjectService.getClients(activeOnly, req.user);
+    const { page, limit } = req.query;
+    const clients = await clientProjectService.getClients(activeOnly, req.user, { page, limit });
     return sendSuccess(res, clients, 'Clients retrieved successfully.');
   } catch (err) {
     next(err);
@@ -34,12 +35,14 @@ export async function handleUpdateClient(req, res, next) {
 
 export async function handleGetProjects(req, res, next) {
   try {
-    const { clientId, activeOnly, assignedToMe } = req.query;
+    const { clientId, activeOnly, assignedToMe, page, limit } = req.query;
     const isSelfAssignedOnly = assignedToMe === 'true';
     const projects = await clientProjectService.getProjects({
       clientId,
       activeOnly: activeOnly === 'true',
       assignedUserId: isSelfAssignedOnly ? req.user.id : undefined,
+      page,
+      limit,
     }, req.user);
     return sendSuccess(res, projects, 'Projects retrieved successfully.');
   } catch (err) {

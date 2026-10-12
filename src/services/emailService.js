@@ -14,8 +14,14 @@ import {
   SMTP_PASS,
   SMTP_SECURE,
 } from '../config/env.js';
+import { triggerEmailWorker } from './emailWorker.js';
 
-export async function sendEmailWithFallback({ to, subject, html, text }) {
+let transporter = null;
+
+
+export async function sendEmailWithFallback({ to, subject, html, text, messageId, emailLogId }) {
+  const customMessageId = messageId || (emailLogId ? `<${emailLogId}@worklog.system>` : undefined);
+
   // 1. If running in production on Render (or if SUPABASE_FUNCTION_URL is configured):
   // Render Free Tier drops outbound TCP traffic on ports 25, 465, and 587.
   // Calling the Supabase Edge Function over HTTPS (Port 443) bypasses Render's firewall completely.
@@ -40,6 +46,7 @@ export async function sendEmailWithFallback({ to, subject, html, text }) {
           from: EMAIL_FROM,
           smtpUser: SMTP_USER,
           smtpPass: SMTP_PASS,
+          messageId: customMessageId,
         }),
       });
 
@@ -56,10 +63,19 @@ export async function sendEmailWithFallback({ to, subject, html, text }) {
     }
   }
 
+  const mailOptions = {
+    from: EMAIL_FROM,
+    to,
+    subject,
+    html,
+    text,
+    ...(customMessageId ? { messageId: customMessageId } : {}),
+  };
+
   if (!SMTP_USER || !SMTP_PASS) {
     if (NODE_ENV !== 'production' || NODE_ENV === 'test') {
       const devTransporter = nodemailer.createTransport({ jsonTransport: true });
-      return devTransporter.sendMail({ from: EMAIL_FROM, to, subject, html, text });
+      return devTransporter.sendMail(mailOptions);
     }
     throw new Error('Email credentials are required in production (configure SUPABASE_FUNCTION_URL or SMTP credentials).');
   }
@@ -86,7 +102,7 @@ export async function sendEmailWithFallback({ to, subject, html, text }) {
 
   try {
     const primaryTransport = createTransport(primaryPort, primarySecure);
-    const mailPromise = primaryTransport.sendMail({ from: EMAIL_FROM, to, subject, html });
+    const mailPromise = primaryTransport.sendMail(mailOptions);
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`Primary SMTP (${primaryPort}) timed out after 8000ms`)), 8000)
     );
@@ -96,7 +112,7 @@ export async function sendEmailWithFallback({ to, subject, html, text }) {
       `Primary SMTP dispatch on port ${primaryPort} failed (${primaryErr.message}). Attempting fallback port ${fallbackPort}...`
     );
     const fallbackTransport = createTransport(fallbackPort, fallbackSecure);
-    const mailPromise = fallbackTransport.sendMail({ from: EMAIL_FROM, to, subject, html });
+    const mailPromise = fallbackTransport.sendMail(mailOptions);
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`Fallback SMTP (${fallbackPort}) timed out after 8000ms`)), 8000)
     );
@@ -270,12 +286,18 @@ export function buildTimeOffReviewRequiredEmail({ recipientName, employeeName, t
  * Queue and dispatch an email asynchronously using Nodemailer.
  * Never delays the HTTP response and never throws an unhandled rejection.
  */
+/**
+ * Queue an email into the durable database-backed queue.
+ * Persists full payload (html, text) in PostgreSQL and triggers the background worker.
+ * Survives Node.js process crashes and guarantees exactly-once atomic execution.
+ */
 export function queueEmail({
   recipientUserId = null,
   recipientEmail,
   emailType,
   subject,
   html,
+  text,
   relatedEntityType = null,
   relatedEntityId = null,
   referenceDate: reference = null,
@@ -284,50 +306,39 @@ export function queueEmail({
   if (!recipientEmail) return;
 
   void (async () => {
-    let log = null;
     try {
-      log = existingLogId
-        ? await prisma.emailLog.findUnique({ where: { id: existingLogId } })
-        : await prisma.emailLog.create({
+      if (existingLogId) {
+        await prisma.emailLog.update({
+          where: { id: existingLogId },
           data: {
-          recipientUserId,
-          recipientEmail,
-          emailType,
-          subject,
-          relatedEntityType,
-          relatedEntityId,
-          referenceDate: referenceDate(reference),
-          status: 'PENDING',
+            html,
+            text,
+            status: 'PENDING',
+            nextRetryAt: new Date(),
           },
         });
-      if (!log) return;
-
-      await sendEmailWithFallback({
-        to: recipientEmail,
-        subject,
-        html,
-      });
-
-      await prisma.emailLog.update({
-        where: { id: log.id },
-        data: {
-          status: 'SENT',
-          sentAt: new Date(),
-          errorMessage: null,
-        },
-      });
-    } catch (error) {
-      transporter = null;
-      if (log) {
-        await prisma.emailLog
-          .update({
-            where: { id: log.id },
-            data: { status: 'FAILED', errorMessage: error.message },
-          })
-          .catch(() => {});
       } else {
-        console.error('Email logging failed:', error.message);
+        await prisma.emailLog.create({
+          data: {
+            recipientUserId,
+            recipientEmail,
+            emailType,
+            subject,
+            html,
+            text,
+            relatedEntityType,
+            relatedEntityId,
+            referenceDate: referenceDate(reference),
+            status: 'PENDING',
+            retryCount: 0,
+            maxRetries: 3,
+            nextRetryAt: new Date(),
+          },
+        });
       }
+      triggerEmailWorker();
+    } catch (error) {
+      console.error('Email queue creation failed:', error.message);
     }
   })();
 }
@@ -337,6 +348,8 @@ export async function reserveEmailLog({
   recipientEmail,
   emailType,
   subject,
+  html = null,
+  text = null,
   relatedEntityType = null,
   relatedEntityId = null,
   referenceDate: reference = null,
@@ -347,10 +360,15 @@ export async function reserveEmailLog({
       recipientEmail,
       emailType,
       subject,
+      html,
+      text,
       relatedEntityType,
       relatedEntityId,
       referenceDate: referenceDate(reference),
       status: 'PENDING',
+      retryCount: 0,
+      maxRetries: 3,
+      nextRetryAt: new Date(),
     },
   });
 }

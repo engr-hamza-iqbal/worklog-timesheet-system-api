@@ -5,7 +5,7 @@ import { bustUserCache } from '../middleware/auth.js';
 /**
  * List all clients with optional active status filtering
  */
-export async function getClients(activeOnly = false, actorUser = null) {
+export async function getClients(activeOnly = false, actorUser = null, { page, limit } = {}) {
   const where = activeOnly ? { isActive: true } : {};
 
   let allowedProjectIds = null;
@@ -24,19 +24,41 @@ export async function getClients(activeOnly = false, actorUser = null) {
     }
   }
 
-  return prisma.client.findMany({
-    where,
-    include: {
-      _count: {
-        select: {
-          projects: allowedProjectIds
-            ? { where: { id: { in: allowedProjectIds } } }
-            : true,
+  const isExplicitPaginated = page !== undefined || limit !== undefined;
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+
+  const [total, clients] = await prisma.$transaction([
+    prisma.client.count({ where }),
+    prisma.client.findMany({
+      where,
+      include: {
+        _count: {
+          select: {
+            projects: allowedProjectIds
+              ? { where: { id: { in: allowedProjectIds } } }
+              : true,
+          },
         },
       },
-    },
-    orderBy: { name: 'asc' },
-  });
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+      take: safeLimit,
+    }),
+  ]);
+
+  if (isExplicitPaginated) {
+    return {
+      clients,
+      items: clients,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    };
+  }
+
+  return clients;
 }
 
 /**
@@ -133,7 +155,7 @@ export async function updateClient(id, { name, isActive }, actorUser = null) {
 /**
  * List projects, optionally filtered by clientId or activeOnly
  */
-export async function getProjects({ clientId, activeOnly = false, assignedUserId } = {}, actorUser = null) {
+export async function getProjects({ clientId, activeOnly = false, assignedUserId, page, limit } = {}, actorUser = null) {
   let canViewBilling = true;
   const where = {};
   if (clientId) where.clientId = clientId;
@@ -170,48 +192,59 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     }
   }
 
-  const projects = await prisma.project.findMany(assignedUserId ? {
-    where,
-    select: {
-      id: true,
-      name: true,
-      clientId: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-      client: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  } : {
-    where,
-    include: {
-      client: {
-        select: { id: true, name: true, isActive: true },
+  const isExplicitPaginated = page !== undefined || limit !== undefined;
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+
+  const [total, projects] = await prisma.$transaction([
+    prisma.project.count({ where }),
+    prisma.project.findMany(assignedUserId ? {
+      where,
+      select: {
+        id: true,
+        name: true,
+        clientId: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        client: { select: { id: true, name: true } },
       },
-      rates: {
-        orderBy: { effectiveFrom: 'desc' },
-        take: 1,
-      },
-      assignments: {
-        where: { removedAt: null },
-        include: {
-          user: {
-            select: { id: true, name: true, email: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+      take: safeLimit,
+    } : {
+      where,
+      include: {
+        client: {
+          select: { id: true, name: true, isActive: true },
+        },
+        rates: {
+          orderBy: { effectiveFrom: 'desc' },
+          take: 1,
+        },
+        assignments: {
+          where: { removedAt: null },
+          include: {
+            user: {
+              select: { id: true, name: true, email: true },
+            },
           },
         },
+        _count: {
+          select: { timeEntries: true },
+        },
       },
-      _count: {
-        select: { timeEntries: true },
-      },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+      take: safeLimit,
+    }),
+  ]);
 
-  return projects.map((p) => ({
+  const formatted = projects.map((p) => ({
     id: p.id,
     name: p.name,
     clientId: p.clientId,
-    clientName: p.client.name,
+    clientName: p.client?.name || '',
     status: p.status,
     currentRate: canViewBilling && p.rates?.[0] ? Number(p.rates[0].ratePerHour) : null,
     assignedEmployees: p.assignments?.map((a) => a.user) || [],
@@ -219,6 +252,19 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   }));
+
+  if (isExplicitPaginated) {
+    return {
+      projects: formatted,
+      items: formatted,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    };
+  }
+
+  return formatted;
 }
 
 /**

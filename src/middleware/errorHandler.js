@@ -23,7 +23,11 @@ export function errorHandler(err, req, res, next) {
     err.code === 'P1002' ||
     err.code === 'P1008' ||
     err.code === 'P1017' ||
-    (typeof err.message === 'string' && err.message.includes("Can't reach database server"))
+    (typeof err.message === 'string' &&
+      (err.message.includes("Can't reach database server") ||
+       err.message.includes('Server has closed the connection') ||
+       err.message.includes('ConnectionReset') ||
+       err.message.includes('forcibly closed')))
   ) {
     console.error('[Database Unavailable]:', err.message || err);
     return sendError(

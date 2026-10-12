@@ -34,6 +34,23 @@ export function assertHistoryQuery(query) {
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
     throw validationError('pageSize must be an integer between 1 and 100.');
   }
+  if (query.startDate && !isIsoDate(query.startDate)) {
+    throw validationError('startDate must use YYYY-MM-DD format.');
+  }
+  if (query.endDate && !isIsoDate(query.endDate)) {
+    throw validationError('endDate must use YYYY-MM-DD format.');
+  }
+  if (query.startDate && query.endDate) {
+    if (query.endDate < query.startDate) {
+      throw validationError('endDate cannot be earlier than startDate.');
+    }
+    const start = new Date(`${query.startDate}T00:00:00.000Z`);
+    const end = new Date(`${query.endDate}T00:00:00.000Z`);
+    const diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    if (diffDays > 90) {
+      throw validationError('History date range cannot exceed 90 days. Use dedicated reporting endpoints for larger intervals.');
+    }
+  }
   if (query.status && !['DRAFT', 'SUBMITTED', 'RETURNED', 'APPROVED'].includes(query.status)) {
     throw validationError('status is invalid.');
   }

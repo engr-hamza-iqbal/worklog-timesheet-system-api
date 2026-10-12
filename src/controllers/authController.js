@@ -177,7 +177,7 @@ export async function handleRevokeInvitation(req, res, next) {
 
 export async function handleGetMe(req, res, next) {
   try {
-    const result = await authService.getCurrentUser(req.user.id);
+    const result = await authService.getCurrentUser(req.user.id, req.user);
     result.csrfToken = ensureCsrfCookie(req, res);
     return sendSuccess(res, result, 'User profile and capabilities retrieved.', 200);
   } catch (err) {

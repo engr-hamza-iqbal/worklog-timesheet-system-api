@@ -48,6 +48,7 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "autocannon": "^8.0.0",
     "prisma": "^5.22.0"
   }
 }

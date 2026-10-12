@@ -120,18 +120,32 @@ export async function getReviewQueue(reviewerUser, filters = {}) {
     if (filters.endDate)   where.workDate.lte = new Date(`${filters.endDate}T23:59:59.999Z`);
   }
 
-  const entries = await prisma.timeEntry.findMany({
-    where,
-    include: {
-      user:    { select: { id: true, name: true, email: true } },
-      project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
-    },
-    orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
-  });
+  const page = filters.page ? Math.max(1, parseInt(filters.page, 10) || 1) : 1;
+  const pageSize = filters.pageSize ? Math.max(1, Math.min(100, parseInt(filters.pageSize, 10) || 20)) : 20;
+
+  const [total, entries] = await Promise.all([
+    prisma.timeEntry.count({ where }),
+    prisma.timeEntry.findMany({
+      where,
+      include: {
+        user:    { select: { id: true, name: true, email: true } },
+        project: { select: { id: true, name: true, status: true, client: { select: { id: true, name: true } } } },
+      },
+      orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
 
   return {
     entries: entries.map(formatReviewEntry),
-    total:   entries.length,
+    total,
+    pagination: page ? {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    } : undefined,
     scope:   scope ? {
       type:       scope.scopedUserIds?.length ? 'USER' : 'PROJECT',
       userIds:    scope.scopedUserIds    || [],

@@ -3,7 +3,8 @@ import { sendSuccess } from '../utils/response.js';
 
 export async function handleGetUsers(req, res, next) {
   try {
-    const users = await userService.getUsers(req.user);
+    const { page, limit, search } = req.query;
+    const users = await userService.getUsers(req.user, { page, limit, search });
     return sendSuccess(res, users, 'Users retrieved successfully.');
   } catch (err) {
     next(err);
