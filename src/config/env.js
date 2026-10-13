@@ -14,8 +14,8 @@ export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 export const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || NODE_ENV !== 'production';
 export const REGISTRATION_ALLOWED_DOMAINS = (process.env.REGISTRATION_ALLOWED_DOMAINS || '')
   .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean);
+  .map((d) => d.replace(/^['"]+|['"]+$/g, '').trim().toLowerCase())
+  .filter((d) => Boolean(d) && d !== 'null' && d !== 'undefined');
 export const DISTRIBUTED_RATE_LIMIT = process.env.DISTRIBUTED_RATE_LIMIT === 'true' || (NODE_ENV === 'production' && process.env.DISTRIBUTED_RATE_LIMIT !== 'false');
 export const REDIS_URL = process.env.REDIS_URL || null;
 export const FRONTEND_URL = process.env.FRONTEND_URL;

@@ -348,10 +348,14 @@ export async function register({ name, email, password, otp, invitationToken }) 
       throw error;
     }
 
-    if (REGISTRATION_ALLOWED_DOMAINS.length > 0) {
+    const activeAllowedDomains = (REGISTRATION_ALLOWED_DOMAINS || [])
+      .map((d) => String(d).replace(/^['"]+|['"]+$/g, '').trim().toLowerCase())
+      .filter((d) => Boolean(d) && d !== 'null' && d !== 'undefined');
+
+    if (activeAllowedDomains.length > 0) {
       const domain = normalizedEmail.split('@')[1];
-      if (!domain || !REGISTRATION_ALLOWED_DOMAINS.includes(domain)) {
-        const error = new Error(`Registration is restricted to authorized email domains: ${REGISTRATION_ALLOWED_DOMAINS.join(', ')}`);
+      if (!domain || !activeAllowedDomains.includes(domain)) {
+        const error = new Error(`Registration is restricted to authorized email domains: ${activeAllowedDomains.join(', ')}`);
         error.statusCode = 403;
         error.code = 'DOMAIN_NOT_ALLOWED';
         throw error;
