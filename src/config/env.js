@@ -11,7 +11,8 @@ if (NODE_ENV === 'production' && !configuredJwtSecret) {
 }
 export const JWT_SECRET = configuredJwtSecret || 'local-development-only-jwt-secret';
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
-export const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || NODE_ENV !== 'production';
+const rawPublicReg = String(process.env.ALLOW_PUBLIC_REGISTRATION ?? '').replace(/^['"]+|['"]+$/g, '').trim().toLowerCase();
+export const ALLOW_PUBLIC_REGISTRATION = rawPublicReg === 'true' || rawPublicReg === '1' || (rawPublicReg === '' && NODE_ENV !== 'production');
 export const REGISTRATION_ALLOWED_DOMAINS = (process.env.REGISTRATION_ALLOWED_DOMAINS || '')
   .split(',')
   .map((d) => d.replace(/^['"]+|['"]+$/g, '').trim().toLowerCase())
