@@ -10,6 +10,9 @@ import {
 import { sendSuccess, sendError } from '../utils/response.js';
 
 function handleError(res, error) {
+  if (!error.status || error.status >= 500) {
+    console.error('TimeOff Controller Error:', error);
+  }
   return sendError(res, error.message, error.status || 500);
 }
 

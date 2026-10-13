@@ -16,7 +16,7 @@ function getResilientDatabaseUrl() {
     }
     // Supabase PgBouncer transaction mode recommendation: 5 connections per client process
     // prevents pooler client exhaustion when dev server and test suites run concurrently.
-    urlObj.searchParams.set('connection_limit', '5');
+    urlObj.searchParams.set('connection_limit', '15');
     return urlObj.toString();
   } catch {
     return originalUrl;

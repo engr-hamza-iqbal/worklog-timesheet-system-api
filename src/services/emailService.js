@@ -72,8 +72,8 @@ export async function sendEmailWithFallback({ to, subject, html, text, messageId
     ...(customMessageId ? { messageId: customMessageId } : {}),
   };
 
-  if (!SMTP_USER || !SMTP_PASS) {
-    if (NODE_ENV !== 'production' || NODE_ENV === 'test') {
+  if (!SMTP_USER || !SMTP_PASS || NODE_ENV === 'test' || process.env.NODE_ENV === 'test') {
+    if (NODE_ENV !== 'production' || NODE_ENV === 'test' || process.env.NODE_ENV === 'test') {
       const devTransporter = nodemailer.createTransport({ jsonTransport: true });
       return devTransporter.sendMail(mailOptions);
     }

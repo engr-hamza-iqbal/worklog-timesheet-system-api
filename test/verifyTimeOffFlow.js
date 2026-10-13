@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import http from 'http';
 import app from '../src/app.js';
 import prisma from '../src/config/db.js';

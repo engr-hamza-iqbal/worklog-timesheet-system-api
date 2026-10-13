@@ -240,7 +240,7 @@ export async function createTimeOffRequest(actorUser, { timeOffTypeId, startDate
       include: requestInclude,
     });
     return created;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 15000, timeout: 30000 });
 
   void notifyReviewersOfNewTimeOffRequest(actorUser, request);
 
@@ -254,18 +254,55 @@ async function notifyReviewersOfNewTimeOffRequest(actorUser, request) {
       select: { id: true, name: true, email: true },
     });
 
-    const potentialReviewers = await prisma.user.findMany({
-      where: { accountType: 'EMPLOYEE', isActive: true, id: { not: actorUser.id } },
-      select: { id: true, name: true, email: true },
+    const grants = await prisma.capabilityGrant.findMany({
+      where: {
+        userId: { not: actorUser.id },
+        capability: { code: 'DECIDE_TIME_OFF' },
+        revokedAt: null,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } },
+        ],
+        user: { isActive: true },
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        scopes: true,
+      },
     });
 
-    const reviewersToNotify = [...admins];
-    for (const employee of potentialReviewers) {
-      const canDecide = await checkUserCapability(employee, 'DECIDE_TIME_OFF', { targetUserId: actorUser.id });
-      if (canDecide) {
-        reviewersToNotify.push(employee);
+    let actorProjectIds = null;
+    const hasProjectScopes = grants.some((g) => g.scopes.some((s) => s.scopeType === 'PROJECT'));
+    if (hasProjectScopes) {
+      const actorAssignments = await prisma.projectAssignment.findMany({
+        where: { userId: actorUser.id, removedAt: null },
+        select: { projectId: true },
+      });
+      actorProjectIds = new Set(actorAssignments.map((a) => a.projectId));
+    }
+
+    const reviewerMap = new Map();
+    for (const admin of admins) {
+      reviewerMap.set(admin.id, admin);
+    }
+
+    for (const grant of grants) {
+      if (!grant.user) continue;
+      if (grant.scopes.length === 0) {
+        reviewerMap.set(grant.user.id, grant.user);
+        continue;
+      }
+      const matches = grant.scopes.some((scope) => {
+        if (scope.scopeType === 'USER' && scope.targetUserId === actorUser.id) return true;
+        if (scope.scopeType === 'PROJECT' && actorProjectIds && actorProjectIds.has(scope.targetProjectId)) return true;
+        return false;
+      });
+      if (matches) {
+        reviewerMap.set(grant.user.id, grant.user);
       }
     }
+
+    const reviewersToNotify = Array.from(reviewerMap.values());
 
     const emailContent = buildTimeOffReviewRequiredEmail({
       employeeName: actorUser.name,
@@ -321,7 +358,7 @@ export async function cancelTimeOffRequest(actorUser, requestId) {
       where: { timeOffRequestId: requestId, status: 'PENDING' },
       data: { status: 'CANCELLED' },
     });
-  });
+  }, { timeout: 30000, maxWait: 15000 });
   return { id: requestId, status: 'CANCELLED' };
 }
 
@@ -368,7 +405,7 @@ export async function decideTimeOffRequest(actorUser, requestId, decision, comme
       where: { timeOffRequestId: requestId, status: 'PENDING' },
       data: { status: decision },
     });
-  });
+  }, { timeout: 30000, maxWait: 15000 });
 
   const emailContent = buildTimeOffDecidedEmail({
     recipientName: request.user.name,

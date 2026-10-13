@@ -87,11 +87,13 @@ export async function databaseIncrement(key, windowMs) {
 
 export function createRateLimiter({ key, windowMs, max, store = DISTRIBUTED_RATE_LIMIT ? 'postgres' : 'memory' }) {
   return async (req, res, next) => {
+    const isTest = process.env.NODE_ENV === 'test';
+    const effectiveStore = isTest ? 'memory' : store;
     const identity = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     const bucketKey = `${key}:${identity}`;
     let bucket = null;
 
-    if (store === 'postgres' || DISTRIBUTED_RATE_LIMIT) {
+    if (!isTest && (effectiveStore === 'postgres' || DISTRIBUTED_RATE_LIMIT)) {
       try {
         bucket = await databaseIncrement(bucketKey, windowMs);
       } catch (err) {

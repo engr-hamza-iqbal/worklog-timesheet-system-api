@@ -19,7 +19,7 @@ const testFiles = [
 for (const testFile of testFiles) {
   const result = spawnSync(process.execPath, [path.join(testDirectory, testFile)], {
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, NODE_ENV: 'test' },
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
