@@ -36,48 +36,50 @@ export async function getUsers(actor = null, { page, limit, search } = {}) {
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
   const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
 
-  const [total, users] = await prisma.$transaction([
-    prisma.user.count({ where }),
-    prisma.user.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        accountType: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        assignments: {
-          where: { removedAt: null },
-          select: {
-            id: true,
-            projectId: true,
-            project: {
-              select: { id: true, name: true, status: true },
-            },
-          },
-        },
-        capabilityGrantsReceived: {
-          where: {
-            revokedAt: null,
-            OR: [
-              { expiresAt: null },
-              { expiresAt: { gt: new Date() } },
-            ],
-          },
-          select: {
-            id: true,
-            capability: {
-              select: { code: true },
-            },
+  const usersPromise = prisma.user.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      accountType: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+      assignments: {
+        where: { removedAt: null },
+        select: {
+          id: true,
+          projectId: true,
+          project: {
+            select: { id: true, name: true, status: true },
           },
         },
       },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
-      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
-      take: safeLimit,
-    }),
+      capabilityGrantsReceived: {
+        where: {
+          revokedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } },
+          ],
+        },
+        select: {
+          id: true,
+          capability: {
+            select: { code: true },
+          },
+        },
+      },
+    },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+    take: safeLimit,
+  });
+
+  const [total, users] = await Promise.all([
+    isExplicitPaginated ? prisma.user.count({ where }) : Promise.resolve(0),
+    usersPromise,
   ]);
 
   const formatted = users.map((u) => ({

@@ -130,24 +130,27 @@ export async function drainEmailQueue(maxLimit = 50, workerId = DEFAULT_WORKER_I
 /**
  * Start the background poller worker loop.
  */
-export function startEmailWorker({ pollIntervalMs = 3000, workerId = DEFAULT_WORKER_ID, sendFn = sendEmailWithFallback } = {}) {
+export function startEmailWorker({ pollIntervalMs = 15000, workerId = DEFAULT_WORKER_ID, sendFn = sendEmailWithFallback } = {}) {
   if (workerRunning) return;
   workerRunning = true;
 
   const runLoop = async () => {
     if (!workerRunning) return;
+    let processedCount = 0;
     try {
-      await drainEmailQueue(10, workerId, sendFn);
+      processedCount = await drainEmailQueue(10, workerId, sendFn);
     } catch (err) {
       console.error('[EmailWorker] Polling error:', err.message);
     } finally {
       if (workerRunning) {
-        workerTimer = setTimeout(runLoop, pollIntervalMs);
+        // If emails were processed, check again in 1s; if queue is empty, backoff to pollIntervalMs (default 15s)
+        const delay = processedCount > 0 ? 1000 : Math.max(pollIntervalMs, 15000);
+        workerTimer = setTimeout(runLoop, delay);
       }
     }
   };
 
-  workerTimer = setTimeout(runLoop, 500);
+  workerTimer = setTimeout(runLoop, 2000);
 }
 
 /**

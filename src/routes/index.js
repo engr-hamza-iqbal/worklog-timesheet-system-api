@@ -16,6 +16,7 @@ import timeOffRoutes from './timeOffRoutes.js';
 import reportRoutes from './reportRoutes.js';
 import analyticsRoutes from './analyticsRoutes.js';
 import emailRoutes from './emailRoutes.js';
+import { handleGetDashboardStats } from '../controllers/dashboardController.js';
 
 const router = express.Router();
 
@@ -29,6 +30,9 @@ router.get('/health', async (req, res) => {
 });
 
 router.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// Dashboard Stats (lightweight aggregated counts to prevent frontend pool starvation)
+router.get('/api/dashboard/stats', authenticate, handleGetDashboardStats);
 
 // API Modules
 router.use('/api/auth', authRoutes);

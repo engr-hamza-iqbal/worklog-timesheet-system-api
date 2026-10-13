@@ -501,7 +501,7 @@ export async function getTimeEntryHistory(actorUser, {
     where.AND = andConditions;
   }
 
-  const [total, entries] = await prisma.$transaction([
+  const [total, entries] = await Promise.all([
     prisma.timeEntry.count({ where }),
     prisma.timeEntry.findMany({
       where,

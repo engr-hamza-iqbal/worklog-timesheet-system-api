@@ -423,7 +423,7 @@ export async function getReviewQueueByReviewer(actorUser) {
       scopeType: config.isGlobal ? 'GLOBAL' : 'SCOPED',
       waitingEntryCount: eligibleEntries.length,
       waitingHours: Math.round((totalMinutes / 60) * 100) / 100,
-      entries: eligibleEntries.map((e) => ({
+      entries: eligibleEntries.slice(0, 50).map((e) => ({
         id: e.id,
         userName: e.user.name,
         userEmail: e.user.email,

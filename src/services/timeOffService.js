@@ -177,15 +177,17 @@ export async function getTimeOffRequests(actorUser, { userId, status, startDate,
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
   const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
 
-  const [total, requests] = await prisma.$transaction([
-    prisma.timeOffRequest.count({ where }),
-    prisma.timeOffRequest.findMany({
-      where,
-      include: requestInclude,
-      orderBy: [{ startDate: 'desc' }, { id: 'desc' }],
-      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
-      take: safeLimit,
-    }),
+  const requestsPromise = prisma.timeOffRequest.findMany({
+    where,
+    include: requestInclude,
+    orderBy: [{ startDate: 'desc' }, { id: 'desc' }],
+    skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+    take: safeLimit,
+  });
+
+  const [total, requests] = await Promise.all([
+    isExplicitPaginated ? prisma.timeOffRequest.count({ where }) : Promise.resolve(0),
+    requestsPromise,
   ]);
 
   const formatted = requests.map(formatRequest);

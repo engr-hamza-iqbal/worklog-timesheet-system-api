@@ -28,23 +28,25 @@ export async function getClients(activeOnly = false, actorUser = null, { page, l
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
   const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
 
-  const [total, clients] = await prisma.$transaction([
-    prisma.client.count({ where }),
-    prisma.client.findMany({
-      where,
-      include: {
-        _count: {
-          select: {
-            projects: allowedProjectIds
-              ? { where: { id: { in: allowedProjectIds } } }
-              : true,
-          },
+  const clientsPromise = prisma.client.findMany({
+    where,
+    include: {
+      _count: {
+        select: {
+          projects: allowedProjectIds
+            ? { where: { id: { in: allowedProjectIds } } }
+            : true,
         },
       },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
-      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
-      take: safeLimit,
-    }),
+    },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+    take: safeLimit,
+  });
+
+  const [total, clients] = await Promise.all([
+    isExplicitPaginated ? prisma.client.count({ where }) : Promise.resolve(0),
+    clientsPromise,
   ]);
 
   if (isExplicitPaginated) {
@@ -196,48 +198,50 @@ export async function getProjects({ clientId, activeOnly = false, assignedUserId
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
   const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
 
-  const [total, projects] = await prisma.$transaction([
-    prisma.project.count({ where }),
-    prisma.project.findMany(assignedUserId ? {
-      where,
-      select: {
-        id: true,
-        name: true,
-        clientId: true,
-        status: true,
-        createdAt: true,
-        updatedAt: true,
-        client: { select: { id: true, name: true } },
+  const projectsPromise = prisma.project.findMany(assignedUserId ? {
+    where,
+    select: {
+      id: true,
+      name: true,
+      clientId: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      client: { select: { id: true, name: true } },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+    take: safeLimit,
+  } : {
+    where,
+    include: {
+      client: {
+        select: { id: true, name: true, isActive: true },
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
-      take: safeLimit,
-    } : {
-      where,
-      include: {
-        client: {
-          select: { id: true, name: true, isActive: true },
-        },
-        rates: {
-          orderBy: { effectiveFrom: 'desc' },
-          take: 1,
-        },
-        assignments: {
-          where: { removedAt: null },
-          include: {
-            user: {
-              select: { id: true, name: true, email: true },
-            },
+      rates: {
+        orderBy: { effectiveFrom: 'desc' },
+        take: 1,
+      },
+      assignments: {
+        where: { removedAt: null },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
           },
         },
-        _count: {
-          select: { timeEntries: true },
-        },
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
-      take: safeLimit,
-    }),
+      _count: {
+        select: { timeEntries: true },
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: isExplicitPaginated ? (safePage - 1) * safeLimit : 0,
+    take: safeLimit,
+  });
+
+  const [total, projects] = await Promise.all([
+    isExplicitPaginated ? prisma.project.count({ where }) : Promise.resolve(0),
+    projectsPromise,
   ]);
 
   const formatted = projects.map((p) => ({
