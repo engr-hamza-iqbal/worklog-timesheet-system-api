@@ -14,14 +14,32 @@ function getResilientDatabaseUrl() {
     if (!currentPoolTimeout || currentPoolTimeout < 45) {
       urlObj.searchParams.set('pool_timeout', '60');
     }
-    // Supabase PgBouncer transaction mode recommendation: 5 connections per client process
-    // prevents pooler client exhaustion when dev server and test suites run concurrently.
-    urlObj.searchParams.set('connection_limit', '15');
+    // Supabase PgBouncer transaction mode: 5 connections per client process
+    // Supports PRISMA_CONNECTION_LIMIT env var for benchmark testing (defaults to 5)
+    const configuredLimit = process.env.PRISMA_CONNECTION_LIMIT || '5';
+    urlObj.searchParams.set('connection_limit', String(configuredLimit));
     return urlObj.toString();
   } catch {
     return originalUrl;
   }
 }
+
+export const queryMetrics = {
+  totalQueries: 0,
+  countQueries: 0,
+  findManyQueries: 0,
+  rawQueries: 0,
+  otherQueries: 0,
+  queryTimes: [],
+  reset() {
+    this.totalQueries = 0;
+    this.countQueries = 0;
+    this.findManyQueries = 0;
+    this.rawQueries = 0;
+    this.otherQueries = 0;
+    this.queryTimes = [];
+  },
+};
 
 const resilientUrl = getResilientDatabaseUrl();
 
@@ -96,26 +114,55 @@ const prisma = basePrisma.$extends({
   query: {
     $allModels: {
       async $allOperations({ model, operation, args, query }) {
-        if (IDEMPOTENT_READ_OPERATIONS.has(operation)) {
-          return await withResilience(() => query(args), `${model}.${operation}`);
+        queryMetrics.totalQueries++;
+        if (operation === 'count') queryMetrics.countQueries++;
+        else if (operation === 'findMany') queryMetrics.findManyQueries++;
+        else queryMetrics.otherQueries++;
+
+        const start = performance.now();
+        try {
+          if (IDEMPOTENT_READ_OPERATIONS.has(operation)) {
+            return await withResilience(() => query(args), `${model}.${operation}`);
+          }
+          // Non-idempotent mutations execute directly without auto-retry
+          return await query(args);
+        } finally {
+          const duration = performance.now() - start;
+          queryMetrics.queryTimes.push({ op: `${model}.${operation}`, duration });
         }
-        // Non-idempotent mutations execute directly without auto-retry
-        return await query(args);
       },
     },
   },
   client: {
     async $queryRaw(...args) {
-      return await withResilience(() => basePrisma.$queryRaw(...args), '$queryRaw');
+      queryMetrics.totalQueries++;
+      queryMetrics.rawQueries++;
+      const start = performance.now();
+      try {
+        return await withResilience(() => basePrisma.$queryRaw(...args), '$queryRaw');
+      } finally {
+        queryMetrics.queryTimes.push({ op: '$queryRaw', duration: performance.now() - start });
+      }
     },
     async $queryRawUnsafe(...args) {
-      return await withResilience(() => basePrisma.$queryRawUnsafe(...args), '$queryRawUnsafe');
+      queryMetrics.totalQueries++;
+      queryMetrics.rawQueries++;
+      const start = performance.now();
+      try {
+        return await withResilience(() => basePrisma.$queryRawUnsafe(...args), '$queryRawUnsafe');
+      } finally {
+        queryMetrics.queryTimes.push({ op: '$queryRawUnsafe', duration: performance.now() - start });
+      }
     },
     async $executeRaw(...args) {
+      queryMetrics.totalQueries++;
+      queryMetrics.rawQueries++;
       // Mutations execute directly; do not retry raw writes
       return await basePrisma.$executeRaw(...args);
     },
     async $executeRawUnsafe(...args) {
+      queryMetrics.totalQueries++;
+      queryMetrics.rawQueries++;
       // Mutations execute directly; do not retry raw writes
       return await basePrisma.$executeRawUnsafe(...args);
     },
